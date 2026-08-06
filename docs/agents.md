@@ -128,8 +128,10 @@ Semantic versioning, patch-per-commit.
   in the docs shows an older version, caption it with the version it was captured
   from instead of silently letting it drift.
 - The version renders in the header (`┌─ Ollama farm 0.0.N ──…──┐`), so a screenshot
-  identifies its build.
-- Tags are `v0.0.N`.
+  identifies its build, and `--version` prints it.
+- **Do not create git tags.** They were used briefly and removed: the version lives
+  in the script, and a second copy in a ref is one more thing that can disagree with
+  it. `VERSION` is the single marker.
 
 While the major version is 0 the interface is not stable; a breaking change is
 marked with `!` in the commit type and a `BREAKING CHANGE:` footer, but does not
