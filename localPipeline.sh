@@ -207,7 +207,7 @@ stage_doc_agreement() {
   local caseblock readme_text f
   caseblock=$(awk '/^while \[ \$# -gt 0 \]/,/^done/' "$SCRIPT")
   readme_text=$(cat "$README")
-  for f in -n -H -p -D --no-color --help; do
+  for f in -n -H -p -D --no-color --version --help; do
     [[ "$readme_text" == *"$f"* ]] || continue
     [[ "$caseblock" == *"$f)"* || "$caseblock" == *"$f|"* ]] || problems+="$f "
   done
@@ -216,6 +216,17 @@ stage_doc_agreement() {
   local ladder
   ladder=$(grep -oP '(?<=^INTERVALS=\().*(?=\))' "$SCRIPT")
   grep -qF "$ladder" "$README" || problems+="interval-ladder "
+
+  # The version must be semver-shaped, agree with --version, and appear in the
+  # README. Bumping it every commit is only useful if it cannot silently drift.
+  local ver ver_flag
+  ver=$(grep -oP '(?<=^VERSION=")[^"]+' "$SCRIPT")
+  if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    problems+="version-not-semver($ver) "
+  fi
+  ver_flag=$("$SCRIPT" --version 2>/dev/null | awk '{print $2}')
+  [ "$ver_flag" = "$ver" ] || problems+="version-flag-mismatch($ver_flag) "
+  [[ "$readme_text" == *"$ver"* ]] || problems+="version-absent-from-README "
 
   # Config keys written must be the same set the README documents.
   local k

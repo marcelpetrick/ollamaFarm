@@ -45,6 +45,7 @@
 #   ./ollamaFarm.sh -H 192.168.100.67,192.168.100.99
 #   ./ollamaFarm.sh -D                 # discover hosts on the /24 at startup
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
+#   ./ollamaFarm.sh --version          # print the version and exit
 #
 # Settings (interval and toggles) persist to $XDG_CONFIG_HOME/ollamafarm/config,
 # so the refresh rate you picked is still there next time.
@@ -64,7 +65,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.10"
+VERSION="0.0.11"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -153,6 +154,7 @@ while [ $# -gt 0 ]; do
     -D|--discover) DO_DISCOVER=1; shift ;;
     --no-color)   WANT_COLOR=never; shift ;;
     --color)      WANT_COLOR=always; shift ;;
+    -V|--version) printf 'ollamaFarm.sh %s\n' "$VERSION"; exit 0 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "unknown arg: $1  (try --help)" >&2; exit 2 ;;
   esac
@@ -529,7 +531,9 @@ while true; do
   stamp=$(date '+%Y-%m-%d %H:%M:%S')
   printf -v line2_plain '  %s   every %ss   %s%s' "$stamp" "$INTERVAL" "$keyhint" "$off_plain"
 
-  hdr_title='┌─ Ollama farm '
+  # The version rides in the title, so a screenshot or a pasted frame identifies
+  # exactly which build produced it.
+  hdr_title="┌─ Ollama farm ${VERSION} "
   # Clamp to the terminal so the pause badge, which sits outside the box, cannot
   # push the header past the right edge on a narrow window.
   hdr_target=${#line2_plain}

@@ -36,18 +36,18 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm ────────────────────────────────────────────────────────────────────────────┐
-  2026-08-06 15:23:16   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
+┌─ Ollama farm 0.0.11 ─────────────────────────────────────────────────────────────────────┐
+  2026-08-06 15:26:22   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
-  192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    7ms
-      qwen3.5:9b-ctx80k                9.7B Q4_K_M   8.01/8.01  GB ctx 81920   ttl 29m38s
+  192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
+      qwen3.5:9b-ctx80k                9.7B Q4_K_M   8.01/8.01  GB ctx 81920   ttl 26m32s
         ↳ presence_penalty=1.5 (~35% slower — bake 0);
 
-  192.168.100.67   ollama 0.32.5  ████████████████████░░  33.1/36.1 GB    7ms
-      qwen3.6:35b-a3b-q4_K_M-agentic  36.0B Q4_K_M  33.09/33.09 GB ctx 262144  ttl 1h57m
+  192.168.100.67   ollama 0.32.5  ████████████████████░░  33.1/36.1 GB   13ms
+      qwen3.6:35b-a3b-q4_K_M-agentic  36.0B Q4_K_M  33.09/33.09 GB ctx 262144  ttl 1h54m
 
   EVENTS
-    15:23:16 loaded qwen3.5:9b-ctx80k on 192.168.100.37
+    15:26:22 loaded qwen3.5:9b-ctx80k on 192.168.100.37
 ```
 
 Note the `↳` line: `.37`'s model is running the qwen vendor default
@@ -61,7 +61,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm ───────────────────────────────────────────────────────  PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.11 ────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -121,6 +121,7 @@ broken.
 ./ollamaFarm.sh -p 11435           # non-default port
 ./ollamaFarm.sh -D                 # scan for hosts at startup
 ./ollamaFarm.sh --no-color         # plain; NO_COLOR is honoured too
+./ollamaFarm.sh --version          # print the version and exit
 ./ollamaFarm.sh --help
 ```
 
@@ -252,6 +253,17 @@ the monitor.
 
 The pipeline is self-contained and needs no network for its mandatory stages; the live
 smoke test against a real server is optional and skipped when no host answers.
+
+---
+
+## Versioning
+
+Semantic versioning, patch bumped on every commit. `VERSION` near the top of
+`ollamaFarm.sh` is the single source of truth; it is rendered in the header
+(`┌─ Ollama farm 0.0.11 ──…──┐`) so a screenshot or a pasted frame identifies its
+build, and `--version` prints it. Tags are `v0.0.N`.
+
+While the major version is `0` the interface is not stable.
 
 ---
 
