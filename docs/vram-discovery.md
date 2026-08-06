@@ -109,8 +109,9 @@ and costs them a 70-second reload, which is not something a monitor may do on it
 
 > **Status 2026-08-06: Phase 1 and Phase 3 are implemented in 0.0.19** — passive
 > learning is always on, and the `s` key runs the scan against idle hosts only.
-> Phase 2 (config override) is not built yet. Measured scan durations: ~15 s for an
-> 8 GB box, several minutes for a 36 GB one.
+> Phase 2 (config override) was dropped as redundant. Scanning is automatic for idle
+> hosts with no trusted ceiling, and available as `s` or `--probe-vram`. Measured
+> durations: ~15-26 s for an 8 GB box, several minutes for a 36 GB one.
 
 ### Phase 1 — passive learning (default, zero cost)
 
@@ -125,11 +126,12 @@ and costs them a 70-second reload, which is not something a monitor may do on it
 4. The `+` is load-bearing: it distinguishes a lower bound from a known total. A bar
    that silently means two different things is worse than no bar.
 
-### Phase 2 — config override (zero cost)
+### Phase 2 — config override — **dropped**
 
-Accept `vram.<host>=<GB>` in the config file, and a `--vram HOST=GB` flag, so a user
-who knows the figure can state it without editing the script. This also lets someone
-correct a bad passive estimate.
+Not built. Typing a figure by hand is redundant now that an idle host bootstraps its
+own ceiling automatically and `--probe-vram` can be re-run at any time, and a
+hand-entered number is the one value nothing can verify. `VRAM_TOTAL` in the script
+remains for figures someone has measured and stands behind.
 
 ### Phase 3 — active scan, implemented as the `s` key
 

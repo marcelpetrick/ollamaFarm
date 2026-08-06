@@ -45,6 +45,9 @@
 #   ./ollamaFarm.sh -n 2               # every 2 s
 #   ./ollamaFarm.sh -H 192.168.100.67,192.168.100.99
 #   ./ollamaFarm.sh -D                 # discover hosts on the /24 at startup
+#   ./ollamaFarm.sh --probe-vram       # scan every host now, print, exit
+#   ./ollamaFarm.sh --probe-vram HOST  # scan one host now, print, exit
+#   ./ollamaFarm.sh --no-auto-scan     # do not bootstrap unknown VRAM ceilings
 #   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
 #   ./ollamaFarm.sh --version          # print the version and exit
@@ -67,7 +70,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.20"
+VERSION="0.0.23"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -75,6 +78,8 @@ DEFAULT_HOSTS="192.168.100.37 192.168.100.67"
 HOSTS="$DEFAULT_HOSTS"
 DO_DISCOVER=0
 PROBE_WORKER=0
+PROBE_CLI=0                # --probe-vram: scan in the foreground, print, exit
+AUTO_SCAN=1                # bootstrap an unknown ceiling automatically, idle hosts only
 WANT_COLOR=auto
 # Colour themes, cycled by the "t" key in this order. "dark" is plain ANSI so it
 # works on any terminal; the other two assume 256-colour support.
@@ -164,13 +169,20 @@ while [ $# -gt 0 ]; do
     -p|--port)    [ $# -ge 2 ] || { echo "-p needs a value" >&2; exit 2; }
                   PORT="$2"; shift 2 ;;
     -D|--discover) DO_DISCOVER=1; shift ;;
-    --probe-worker) # internal: run the ceiling scan and exit, no TUI
+    --probe-worker) # internal: the detached worker started by "s" / auto-scan
                   PROBE_WORKER=1; shift ;;
+    --probe-vram) # user-facing: scan now, in the foreground, printing progress.
+                  # An optional host argument narrows it to one server.
+                  PROBE_CLI=1; shift
+                  if [ $# -ge 1 ] && [ "${1#-}" = "$1" ]; then
+                    HOSTS=$(echo "$1" | tr ',' ' '); HOSTS_FROM_ARG=1; shift
+                  fi ;;
     --theme)      [ $# -ge 2 ] || { echo "--theme needs a value" >&2; exit 2; }
                   THEME=""
                   for t in "${THEMES[@]}"; do [ "$2" = "$t" ] && THEME="$2"; done
                   [ -n "$THEME" ] || { echo "unknown theme: $2 (have: ${THEMES[*]})" >&2; exit 2; }
                   shift 2 ;;
+    --no-auto-scan) AUTO_SCAN=0; shift ;;
     --no-color)   WANT_COLOR=never; shift ;;
     --color)      WANT_COLOR=always; shift ;;
     -V|--version) printf 'ollamaFarm.sh %s\n' "$VERSION"; exit 0 ;;
@@ -257,13 +269,21 @@ apply_theme "$THEME"
 
 # --------------------------------------------------------------- terminal -----
 TTY_STATE=""
+# $? must be captured on the very first line: this is an EXIT trap, so the pending
+# exit status is whatever the script was exiting with. The previous version ended in a
+# bare "exit 0", which silently turned every failure after the trap was installed into
+# a success -- including --probe-vram's "no ceiling established" exit 1.
 cleanup() {
-  # Restore unconditionally: cursor, echo, and the saved termios. Without the
-  # stty restore an interrupt mid-read leaves the user's shell without echo.
+  local rc=${1:-$?}
+  # Restore what was actually changed, and nothing more. The escape sequences and the
+  # config write belong to the TUI; --probe-vram and --probe-worker touch neither, and
+  # emitting them there leaked "\e[?25h\e[0m" into piped output.
   [ -n "$TTY_STATE" ] && stty "$TTY_STATE" 2>/dev/null
-  printf '\e[?25h\e[0m\n'
-  save_config
-  exit 0
+  if [ "$PROBE_CLI" = "0" ] && [ "$PROBE_WORKER" = "0" ]; then
+    [ -t 1 ] && printf '\e[?25h\e[0m\n'
+    save_config
+  fi
+  exit "$rc"
 }
 trap cleanup INT TERM EXIT
 if [ -t 0 ]; then
@@ -371,6 +391,7 @@ EVENT_MAX=6
 declare -a EVENTS=()
 declare -A PREV_MODELS=()   # host -> space-separated resident model names
 declare -A PREV_TTL=()      # "host|model" -> seconds of keep_alive left when last seen
+declare -A HOST_SEEN=()     # host -> 1 once it has answered at least once
 declare -A SUSPECT_NAME=()  # host -> model that vanished early, awaiting confirmation
 declare -A SUSPECT_AT=()    # host -> epoch seconds when that happened
 # How long a suspected eviction stays open. A cold 33 GB MoE took ~70 s to become
@@ -469,6 +490,8 @@ render_host() {
     fi
     return
   fi
+
+  HOST_SEEN[$host]=1
 
   local t0 t1 lat ps
   t0=$(date +%s%3N)
@@ -642,7 +665,11 @@ help_overlay() {
 #   3. it runs detached, and the UI keeps refreshing. A scan takes ~40-70 s on a small
 #      box and several minutes on a large one, because reach requires a large model and
 #      a 33 GB model alone takes ~70 s to load.
-plog() { printf '%s\n' "$*" >> "$PROBE_LOG"; }
+plog() {
+  printf '%s\n' "$*" >> "$PROBE_LOG"
+  [ "$PROBE_CLI" = "1" ] && printf '%s\n' "$*"
+  return 0
+}
 
 # Load a model at a given num_ctx, then report "<size_vram_gb> <split:0|1>".
 probe_load() {  # probe_load <host> <model> <ctx>
@@ -736,21 +763,64 @@ probe_worker() {
 }
 
 # Launch the detached worker, refusing to stack two scans on top of each other.
-start_probe() {
-  if [ -f "$PROBE_LOCK" ] && kill -0 "$(cat "$PROBE_LOCK" 2>/dev/null)" 2>/dev/null; then
+probe_running() {
+  [ -f "$PROBE_LOCK" ] && kill -0 "$(cat "$PROBE_LOCK" 2>/dev/null)" 2>/dev/null
+}
+
+start_probe() {  # start_probe [host ...]   (defaults to every known host)
+  local targets="${*:-$HOSTS}"
+  if probe_running; then
     event "$C_YEL" "a ceiling scan is already running"
     return 0
   fi
+  [ -n "${targets// /}" ] || return 0
   mkdir -p "$CFG_DIR" 2>/dev/null
-  setsid nohup "$0" --probe-worker -H "$(echo "$HOSTS" | tr ' ' ',')" -p "$PORT" \
+  setsid nohup "$0" --probe-worker -H "$(echo "$targets" | tr ' ' ',')" -p "$PORT" \
     </dev/null >/dev/null 2>&1 &
   echo $! > "$PROBE_LOCK"
   PROBE_OFFSET=0
-  event "$C_GRN" "ceiling scan started on idle hosts — minutes on a large box, see events"
+  event "$C_GRN" "ceiling scan started: ${targets// /, } — minutes on a large box"
+}
+
+# Bootstrap a ceiling for hosts that have none worth trusting.
+#
+# Passive learning cannot get started on an idle host: with nothing resident there is
+# nothing to observe. The scan solves exactly that -- it loads a model itself and then
+# expands num_ctx upward from there -- so it is triggered automatically rather than
+# waiting for someone to press "s".
+#
+# Only for hosts that are idle (so nothing is ever evicted) and whose ceiling is either
+# unknown or merely "learned". An exact table figure or an earlier probe is trusted and
+# left alone, and each host is attempted once per session so a failure cannot loop.
+declare -A AUTO_TRIED=()
+maybe_auto_scan() {
+  [ "$AUTO_SCAN" = "1" ] || return 0
+  probe_running && return 0
+  local h cand=""
+  for h in $HOSTS; do
+    [ -n "${AUTO_TRIED[$h]:-}" ] && continue
+    [ -n "${VRAM_TOTAL[$h]:-}" ] && continue                 # exact figure, trusted
+    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && continue         # already probed
+    [ -n "${PREV_MODELS[$h]:-}" ] && continue                 # busy: never evict
+    [ -z "${HOST_SEEN[$h]:-}" ] && continue                   # not reached yet
+    cand+="$h "
+  done
+  [ -n "${cand// /}" ] || return 0
+  for h in $cand; do AUTO_TRIED[$h]=1; done
+  event "$C_DIM" "no known ceiling for ${cand% } — bootstrapping a scan (idle, nothing evicted)"
+  start_probe "${cand% }"
 }
 
 # Fold new worker output into the event log, and adopt any RESULT it reports.
+#
+# The offset starts at the CURRENT end of the log, not at zero. Starting at zero
+# replayed a previous session's scan on every launch: its events reappeared as if
+# live, and -- worse -- its RESULT lines were re-adopted, resurrecting a ceiling the
+# user had just deleted from the cache. Only output produced after this process
+# started is ours to read.
 PROBE_OFFSET=0
+[ -r "$PROBE_LOG" ] && PROBE_OFFSET=$(wc -c < "$PROBE_LOG" 2>/dev/null || echo 0)
+[[ "$PROBE_OFFSET" =~ ^[0-9]+$ ]] || PROBE_OFFSET=0
 drain_probe_log() {
   [ -r "$PROBE_LOG" ] || return 0
   local size; size=$(wc -c < "$PROBE_LOG" 2>/dev/null) || return 0
@@ -771,6 +841,18 @@ drain_probe_log() {
 
 # ------------------------------------------------------------------- main ------
 if [ "$PROBE_WORKER" = "1" ]; then probe_worker; exit 0; fi
+
+# --probe-vram: same scan, in the foreground, so it is usable from a script or a
+# terminal without the TUI. Exits non-zero when no ceiling could be established --
+# every host busy, or no model would fit -- so a caller can tell.
+if [ "$PROBE_CLI" = "1" ]; then
+  probe_worker
+  for h in $HOSTS; do
+    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && exit 0
+  done
+  echo "no ceiling established (hosts busy, or no model fits)" >&2
+  exit 1
+fi
 
 printf '\e[?25l'   # hide cursor
 FIRST=1
@@ -860,6 +942,7 @@ while true; do
   fi
 
   drain_probe_log
+  maybe_auto_scan
 
   if [ "$SHOW_EVENTS" = "1" ] && [ "${#EVENTS[@]}" -gt 0 ]; then
     emit '  %sEVENTS%s\n' "$C_HDR" "$C_RST"
@@ -920,6 +1003,6 @@ while true; do
           apply_theme "$THEME"; save_config ;;
     s|S)  start_probe ;;
     d|D)  discover "$HOSTS" ;;
-    q|Q)  cleanup ;;
+    q|Q)  cleanup 0 ;;
   esac
 done

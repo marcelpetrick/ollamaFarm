@@ -45,7 +45,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.20 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.23 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +70,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.20 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.23 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -112,7 +112,7 @@ VRAM ceiling is honestly `?` rather than guessed.
 | `e` | event log |
 | `d` | re-run host discovery |
 | `t` | cycle colour theme (`dark` → `vivid` → `light`) |
-| `s` | scan idle hosts for their VRAM ceiling |
+| `s` | re-scan idle hosts for their VRAM ceiling |
 | `h` or `?` | help overlay |
 | `q` | quit |
 
@@ -131,6 +131,8 @@ broken.
 ./ollamaFarm.sh -H 10.0.0.5,10.0.0.6
 ./ollamaFarm.sh -p 11435           # non-default port
 ./ollamaFarm.sh -D                 # scan for hosts at startup
+./ollamaFarm.sh --probe-vram HOST  # scan for a VRAM ceiling now, then exit
+./ollamaFarm.sh --no-auto-scan     # do not bootstrap unknown ceilings
 ./ollamaFarm.sh --theme light      # dark (default) | vivid | light
 ./ollamaFarm.sh --no-color         # plain; NO_COLOR is honoured too
 ./ollamaFarm.sh --version          # print the version and exit
@@ -243,8 +245,25 @@ The **`+` is load-bearing.** A bar that silently meant either "this is the capac
 total ever seen *fully resident* is recorded as a lower bound. A split total is never
 used — it can be lower than a residency already known to work.
 
-**`s` scans** for a tighter figure by loading a model at escalating `num_ctx` until it
-splits. It is safe to press on a shared server:
+**Scanning** gets a tighter figure by loading a model at escalating `num_ctx` until it
+splits — which is also how a host with *nothing* resident gets bootstrapped, since
+passive observation cannot start from an idle server. It happens three ways:
+
+```shell
+# automatic: on startup, for any idle host whose ceiling is unknown or only learned
+./ollamaFarm.sh
+./ollamaFarm.sh --no-auto-scan          # opt out
+
+# interactive: press s at any time to re-scan
+# foreground, no TUI — usable from a script:
+./ollamaFarm.sh --probe-vram            # every known host
+./ollamaFarm.sh --probe-vram 10.0.0.5   # one host
+```
+
+`--probe-vram` prints progress and exits **0** when it established a ceiling, **1**
+when it could not — every host busy, or no model fits.
+
+It is safe on a shared server:
 
 - **idle hosts only.** Anything resident and the host is skipped, loudly, naming what
   it would have had to evict. Evicting a colleague's model costs them a ~70 s reload.
@@ -358,7 +377,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.20 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.23 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
