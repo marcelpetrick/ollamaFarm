@@ -17,15 +17,23 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Install quality tools
+      # A direct fetch avoids making CI depend on the separate Actions download
+      # service. This repository is public, so no token or persisted credentials
+      # are needed to fetch the exact commit that triggered the workflow.
+      - name: Fetch repository
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends shellcheck
+          set -euo pipefail
+          git init --initial-branch=ci .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+
+      - name: Show quality tool versions
+        run: |
+          set -euo pipefail
+          bash --version
+          shellcheck --version
+          jq --version
 
       - name: Run local quality pipeline
         run: ./localPipeline.sh --no-live
