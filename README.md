@@ -45,7 +45,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.23 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.24 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +70,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.23 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.24 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -260,8 +260,57 @@ passive observation cannot start from an idle server. It happens three ways:
 ./ollamaFarm.sh --probe-vram 10.0.0.5   # one host
 ```
 
-`--probe-vram` prints progress and exits **0** when it established a ceiling, **1**
-when it could not — every host busy, or no model fits.
+### `--probe-vram` in detail
+
+Runs the scan in the foreground, prints progress, exits. Real output:
+
+```console
+$ ./ollamaFarm.sh --probe-vram 192.168.100.54
+scan started 17:57:49
+probe 192.168.100.54: llama3.2-vision:11b (max ctx 131072)
+  llama3.2-vision:11b splits even at ctx 2048 — too large, trying a smaller model
+probe 192.168.100.54: minicpm-v:latest (max ctx 32768)
+  minicpm-v:latest splits even at ctx 2048 — too large, trying a smaller model
+probe 192.168.100.54: qwen3.5:4b-ctx54k (max ctx 262144)
+  ctx 2048: resident 3.06 GB
+  ctx 132096: resident 7.22 GB
+  ctx 197120: SPLIT — ceiling is below this
+  ctx 164608: SPLIT — ceiling is below this
+  ctx 148352: resident 7.77 GB
+  ctx 156480: SPLIT — ceiling is below this
+  ctx 152416: SPLIT — ceiling is below this
+RESULT 192.168.100.54 7.77
+scan finished 17:58:57
+```
+
+Note the two fallbacks: the largest model, and then the second largest, split even at
+the minimum context, so the scan moved on to one that fits. That is the reach problem —
+it wants the biggest model that still fits, and finds it by trying.
+
+**The result is used, not just printed.** It is written to
+`$XDG_CONFIG_HOME/ollamafarm/vram` as `source=probed`, and every later run of the
+monitor draws its bar against it:
+
+```
+192.168.100.54   ollama 0.32.6  ░░░░░░░░░░░░░░░░░░░░░░   0.0/7.77+ GB    7ms
+```
+
+Exit codes:
+
+| code | meaning |
+|---|---|
+| `0` | a ceiling was established and stored |
+| `1` | none could be — every host busy, or no model fits |
+| `2` | bad arguments |
+
+So it is usable in a script:
+
+```shell
+./ollamaFarm.sh --probe-vram 10.0.0.5 || echo "host busy, try later"
+```
+
+Repeated runs are cheap to reason about: the figure only ever moves when the machine
+does, and a probed value is never overwritten by a smaller passive observation.
 
 It is safe on a shared server:
 
@@ -377,7 +426,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.23 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.24 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
