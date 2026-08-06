@@ -5,7 +5,7 @@ one that watches for the silent ways a local LLM box loses most of its speed.**
 
 [![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
 [![license: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
-[![shellcheck: clean](https://img.shields.io/badge/shellcheck-clean-brightgreen)](https://www.shellcheck.net/)
+[![Quality](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml)
 
 One file, no runtime, no daemon: `curl` + `jq` + `awk` and a terminal.
 
@@ -50,7 +50,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.25 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.26 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -75,7 +75,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.25 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.26 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -423,7 +423,9 @@ the monitor.
 ```
 
 The pipeline is self-contained and needs no network for its mandatory stages; the live
-smoke test against a real server is optional and skipped when no host answers.
+smoke test against a real server is optional and skipped when no host answers. Every
+push runs the mandatory stages in GitHub Actions; the Quality badge at the top links
+to the latest result for `master`.
 
 ---
 
@@ -431,7 +433,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.25 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.26 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
