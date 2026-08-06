@@ -66,7 +66,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.16"
+VERSION="0.0.17"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -187,7 +187,7 @@ done
 # the green thing is fine and the red thing is costing you throughput -- otherwise
 # the display stops being readable at a glance, which is the only reason it exists.
 #
-# Slots: C_GRN good · C_YEL warning · C_RED bad · C_CYA figures · C_MAG model names
+# Slots: C_GRN good · C_YEL warning · C_RED bad · C_FIG figures · C_MODEL model names
 #        C_DIM secondary text · C_B emphasis · C_REV inverted badge
 use_color=1
 case "$WANT_COLOR" in
@@ -199,20 +199,26 @@ esac
 apply_theme() {
   if [ "$use_color" != "1" ]; then
     C_RST=""; C_DIM=""; C_B=""; C_REV=""
-    C_GRN=""; C_YEL=""; C_RED=""; C_CYA=""; C_MAG=""
+    C_GRN=""; C_YEL=""; C_RED=""; C_FIG=""; C_MODEL=""
+    C_HDR=""; C_HOST=""; C_LBL=""
     return 0
   fi
   C_RST=$'\e[0m'; C_B=$'\e[1m'; C_REV=$'\e[7m'
   case "$1" in
     vivid)
-      # 256-colour, saturated, with the red/green/blue triad carrying the states and
-      # bold on the strong ones. Assumes a dark background and a 256-colour terminal.
-      C_DIM=$'\e[38;5;245m'
-      C_GRN=$'\e[1;38;5;41m'    # spring green
-      C_YEL=$'\e[1;38;5;214m'   # amber
-      C_RED=$'\e[1;38;5;197m'   # hot red
-      C_CYA=$'\e[38;5;39m'      # azure — figures
-      C_MAG=$'\e[38;5;141m'     # violet — model names
+      # Deliberately loud, in the spirit of btop/abtop: structure in cyan, figures in
+      # orange, identities in bright hues, and secondary text coloured rather than
+      # merely dimmed -- which is what made the earlier version of this theme look
+      # flat despite having saturated state colours.
+      C_DIM=$'\e[38;5;244m'
+      C_GRN=$'\e[1;38;5;47m'    # bright spring green — healthy
+      C_YEL=$'\e[1;38;5;220m'   # gold — about to change
+      C_RED=$'\e[1;38;5;198m'   # hot pink-red — costing you throughput
+      C_FIG=$'\e[1;38;5;208m'   # orange — figures
+      C_MODEL=$'\e[1;38;5;177m' # orchid — model names
+      C_HDR=$'\e[1;38;5;51m'    # bright cyan — rules and section headings
+      C_HOST=$'\e[1;38;5;123m'  # pale cyan, bold — host identity
+      C_LBL=$'\e[38;5;80m'      # teal — field labels and units
       ;;
     light)
       # For a light terminal background: the ANSI defaults wash out on white, so
@@ -223,15 +229,20 @@ apply_theme() {
       C_GRN=$'\e[38;5;28m'      # forest green
       C_YEL=$'\e[38;5;130m'     # dark amber (yellow is unreadable on white)
       C_RED=$'\e[38;5;124m'     # brick red
-      C_CYA=$'\e[38;5;24m'      # deep teal — figures
-      C_MAG=$'\e[38;5;90m'      # plum — model names
+      C_FIG=$'\e[38;5;166m'     # burnt orange — figures
+      C_MODEL=$'\e[38;5;90m'    # plum — model names
+      C_HDR=$'\e[1;38;5;23m'    # deep teal — rules and section headings
+      C_HOST=$'\e[1;38;5;236m'  # near-black, bold — host identity
+      C_LBL=$'\e[38;5;24m'      # dark teal — field labels and units
       ;;
     *)
       # dark (default): plain ANSI 8-colour, so it works on anything, including a
-      # tty with no 256-colour support, and inherits the user's own palette.
+      # tty with no 256-colour support, and inherits the user's own palette. The
+      # extra slots fall back to bold/dim here rather than inventing hues.
       C_DIM=$'\e[2m'
       C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_RED=$'\e[31m'
-      C_CYA=$'\e[36m'; C_MAG=$'\e[35m'
+      C_FIG=$'\e[36m'; C_MODEL=$'\e[35m'
+      C_HDR=$'\e[1m'; C_HOST=$'\e[1m'; C_LBL=$'\e[2m'
       ;;
   esac
 }
@@ -379,7 +390,7 @@ render_host() {
 
   if [ -z "$ver" ]; then
     emit '  %s%-16s%s  %sUNREACHABLE%s %s(USB ethernet adapter up?)%s\n' \
-      "$C_B" "$host" "$C_RST" "$C_RED" "$C_RST" "$C_DIM" "$C_RST"
+      "$C_HOST" "$host" "$C_RST" "$C_RED" "$C_RST" "$C_DIM" "$C_RST"
     # A host that drops out should not look like a host whose models expired.
     if [ -n "${PREV_MODELS[$host]:-}" ]; then
       event "$C_RED" "$host went unreachable (was holding: ${PREV_MODELS[$host]})"
@@ -403,16 +414,16 @@ render_host() {
   used=$(printf '%s' "$ps" | jq -r '[.models[]?.size_vram] | add // 0 | ./1e9' 2>/dev/null) || used=0
   used=$(num "$used")
 
-  emit '  %s%-16s%s %sollama %-7s%s ' "$C_B" "$host" "$C_RST" "$C_DIM" "$ver" "$C_RST"
+  emit '  %s%-16s%s %sollama %-7s%s ' "$C_HOST" "$host" "$C_RST" "$C_LBL" "$ver" "$C_RST"
   if [ -n "$total" ] && [ "$SHOW_BARS" = "1" ]; then
     emit '%s ' "$(bar "$used" "$total" 22)"
-    emit '%s%5.1f%s/%s GB ' "$C_CYA" "$used" "$C_RST" "$total"
+    emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
   elif [ -n "$total" ]; then
-    emit '%s%5.1f%s/%s GB ' "$C_CYA" "$used" "$C_RST" "$total"
+    emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
   else
-    emit '%s%5.1f GB%s/%s? ' "$C_CYA" "$used" "$C_RST" "$C_DIM$C_RST"
+    emit '%s%5.1f GB%s/%s? ' "$C_FIG" "$used" "$C_RST" "$C_DIM$C_RST"
   fi
-  local lcol=$C_DIM
+  local lcol=$C_FIG
   [ "$lat" -gt 400 ] && lcol=$C_YEL
   [ "$lat" -gt 1500 ] && lcol=$C_RED
   emit '%s%4dms%s\n' "$lcol" "$lat" "$C_RST"
@@ -502,10 +513,10 @@ render_host() {
       PREV_TTL["$host|$name"]="$secs"
 
       emit '      %s%-30s%s %s%6s %-7s%s %s%5.2f/%-5.2f GB%s %sctx %-7s%s %sttl %-7s%s%s%s%s\n' \
-        "$C_MAG" "$name" "$C_RST" \
-        "$C_DIM" "$psize" "$quant" "$C_RST" \
+        "$C_MODEL" "$name" "$C_RST" \
+        "$C_LBL" "$psize" "$quant" "$C_RST" \
         "$scol" "$vram" "$size" "$C_RST" \
-        "$C_DIM" "$ctx" "$C_RST" \
+        "$C_LBL" "$ctx" "$C_RST" \
         "$lc" "$left" "$C_RST" \
         "$scol" "$split" "$C_RST"
 
@@ -522,7 +533,7 @@ render_host() {
 }
 
 help_overlay() {
-  emit '  %s%sKEYS%s\n' "$C_B" "$C_REV" "$C_RST"
+  emit '  %s%sKEYS%s\n' "$C_HDR" "$C_REV" "$C_RST"
   emit '    %s- +%s  refresh faster / slower    %sp%s  pause/resume   %sq%s  quit\n' \
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %sv%s    VRAM bars                  %sm%s  model detail   %sw%s  warnings\n' \
@@ -599,7 +610,7 @@ while true; do
   printf -v hdr_rule '%*s' "$rule_w" ''
   hdr_rule="${hdr_rule// /─}"
 
-  emit '%s%s%s┐%s%s\n' "$C_B" "$hdr_title" "$hdr_rule" "$C_RST" "$hdr_state"
+  emit '%s%s%s┐%s%s\n' "$C_HDR" "$hdr_title" "$hdr_rule" "$C_RST" "$hdr_state"
   emit '  %s%s   every %ss%s   %s%s%s%s\n\n' \
        "$C_DIM" "$stamp" "$INTERVAL" "$C_RST" "$C_DIM" "$keyhint" "$C_RST" "$off"
 
@@ -624,7 +635,7 @@ while true; do
   fi
 
   if [ "$SHOW_EVENTS" = "1" ] && [ "${#EVENTS[@]}" -gt 0 ]; then
-    emit '  %sEVENTS%s\n' "$C_B" "$C_RST"
+    emit '  %sEVENTS%s\n' "$C_HDR" "$C_RST"
     for ev in "${EVENTS[@]}"; do
       ts="${ev%%|*}"; rest="${ev#*|}"; col="${rest%%|*}"; txt="${rest#*|}"
       emit '    %s%s%s %s%s%s\n' "$C_DIM" "$ts" "$C_RST" "$col" "$txt" "$C_RST"

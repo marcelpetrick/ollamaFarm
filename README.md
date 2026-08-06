@@ -45,7 +45,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.16 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.17 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +70,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.16 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.17 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -179,12 +179,34 @@ Three, cycled with `t` or chosen with `--theme`:
 | theme | for | palette |
 |---|---|---|
 | `dark` *(default)* | any terminal, including a plain tty | ANSI 8-colour, so it inherits **your** palette |
-| `vivid` | dark background, 256-colour terminal | saturated red/green/blue triad, bold on the strong states |
-| `light` | light background | dark ends of each hue — forest green, brick red, dark amber |
+| `vivid` | dark background, 256-colour | loud, btop-style: cyan structure, orange figures, orchid model names |
+| `light` | light background | dark ends of each hue — forest green, brick red, burnt orange |
+
+`vivid` paints seven distinct hues in a single frame where `dark` uses five, two of
+which are only bold and dim. The difference is that it colours **secondary** text —
+field labels, units, the Ollama version, latency — instead of dimming it, which is
+what makes a dashboard look alive rather than grey.
+
+### The slots a theme paints
+
+Colour is assigned by role, never picked at the call site, so a theme cannot
+accidentally repurpose a meaning:
+
+| slot | role |
+|---|---|
+| `C_GRN` | healthy — resident, fully in VRAM |
+| `C_YEL` | about to change — expiring `ttl`, elevated latency, hidden sections |
+| `C_RED` | costing you throughput **now** — split to CPU, evicted, unreachable |
+| `C_FIG` | figures — VRAM totals, latency |
+| `C_MODEL` | model names |
+| `C_HDR` | structure — the header rule, `EVENTS`, `KEYS` |
+| `C_HOST` | host identity |
+| `C_LBL` | labels and units — `ctx`, `ttl`, quantisation, version |
+| `C_DIM` | genuinely secondary text |
 
 The palette changes; **the meaning never does.** In every theme green is healthy, red
 is costing you throughput right now, and yellow is about to change. That is the whole
-point of colouring a monitor, so a theme may repaint a slot but must not repurpose it.
+point of colouring a monitor.
 
 Two notes on the choices:
 
@@ -192,7 +214,8 @@ Two notes on the choices:
   instead. It also sets an explicit grey for secondary text, because the ANSI *dim
   attribute* renders as barely-there on a light background in several terminals.
 - `dark` deliberately stays 8-colour rather than looking nicer. It is the fallback
-  that has to work over serial, in a VM console, and under `TERM=linux`.
+  that has to work over serial, in a VM console, and under `TERM=linux`, and its
+  extra slots fall back to bold and dim rather than inventing hues.
 
 `--no-color` and `NO_COLOR` bypass theming entirely and emit no escape sequences.
 
@@ -298,7 +321,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.16 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.17 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
