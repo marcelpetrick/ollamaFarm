@@ -1,8 +1,8 @@
 # ollamaFarm
 
 **A terminal dashboard for a farm of [Ollama](https://ollama.com) servers.** Finds them
-on your network, shows what every one of them is doing, and keeps up at 1 Hz — in the
-spirit of `htop` and `btop`, for LLM boxes instead of CPUs.
+on your network, shows what each one has resident, and keeps up at 1 Hz — in the spirit
+of `htop` and `btop`, for LLM boxes instead of CPUs.
 
 [![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
 [![license: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
@@ -30,22 +30,24 @@ version in the header rule.</sub>
 
 ## Features
 
-- **Finds your servers.** Scans the local `/24` for anything answering the Ollama API,
-  caches what it finds, and re-scans on a keypress. No config needed to start.
+- **Finds your servers.** Start with `-D`, or press `d`, to scan each configured `/24`
+  for anything answering the Ollama API and cache what it finds.
 - **Shows every host at a glance** — version, VRAM in use with a bar, response latency,
   and each resident model with its size, quantisation, context and keep-alive countdown.
-- **Works out how much VRAM a host really has**, which the API does not tell you: it
-  learns from what it observes, and can measure an idle host by loading a model and
-  expanding until it spills. Automatic, or on demand with `s` / `--probe-vram`.
+- **Establishes an honest lower bound for usable VRAM**, which the API does not tell
+  you: it learns from what it observes, and can probe an idle host by loading a model
+  and expanding until it spills. Automatic for unknown idle hosts, or on demand with
+  `s` / `--probe-vram`.
 - **A live event log** — models loading, expiring, being displaced, hosts dropping off
   the network. State changes you would otherwise have to catch in the act.
 - **Three colour themes**, switchable while running: `dark` for any terminal, `vivid`
   for a loud 256-colour look, `light` for a white background.
 - **Proper TUI controls** — `+`/`-` refresh rate, pause, per-section toggles, a help
   overlay, all persisted between sessions.
-- **Read-only and credential-free.** Two `GET`s per host per frame. It never creates or
-  deletes a model, and needs no account on the machines it watches — which is what makes
-  it safe to point at a colleague's server.
+- **Credential-free monitoring.** The normal refresh loop only reads API state and
+  needs no account on the machines it watches. A VRAM probe is the deliberate exception:
+  it loads only on an idle host, unloads after each attempt, and can be disabled with
+  `--no-auto-scan`.
 - **Flags configurations that quietly cost you throughput** — see
   [what it watches](#what-it-watches).
 
@@ -56,7 +58,7 @@ version in the header rule.</sub>
 Real output, two servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.28 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.29 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -78,7 +80,7 @@ one line per resident model. The `↳` line under a model is a configuration war
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.28 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.29 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -253,9 +255,10 @@ resident gets bootstrapped, since passive observation cannot start from an idle 
 ```
 
 It is safe on a shared server: **idle hosts only** — anything resident and the host is
-skipped, loudly, naming what it would have had to evict; `keep_alive: 0` on every load,
-so nothing is left behind; and it runs **detached**, so the display keeps refreshing
-while progress appears in the event log. A second scan while one runs is refused.
+skipped, loudly, naming what it would have had to evict; an explicit `keep_alive: 0`
+request unloads the model after every test load; and it runs **detached**, so the display
+keeps refreshing while progress appears in the event log. A second scan while one runs
+is refused.
 
 Durations: **~15–60 s** for a small box, **several minutes** for a large one — reach
 needs a large model, and a 33 GB model alone takes ~70 s per load.
@@ -382,10 +385,11 @@ The full write-up lives with the original benchmarking work in
 <details>
 <summary>Load on a shared server, what it cannot show, known limits</summary>
 
-**Load.** Two `GET`s per host per frame (`/api/version`, `/api/ps`), both read-only.
-`/api/show` is fetched once per (host, model) and cached. Nothing is polled while
-paused. At 1 Hz two hosts are about 170k requests a day, which is worth knowing before
-leaving it running overnight; `+` dials the interval back to 30 s.
+**Load.** The monitoring loop makes two read-only `GET`s per host per frame
+(`/api/version`, `/api/ps`); `/api/show` is fetched once per (host, model) and cached.
+The loop polls nothing while paused, although a detached VRAM probe already in progress
+continues until it finishes. At 1 Hz two hosts are about 170k requests a day, which is
+worth knowing before leaving it running overnight; `+` dials the interval back to 30 s.
 
 **GPU temperature, utilisation, fan and power are not shown.** The Ollama API does not
 expose them — they live in `nvidia-smi` on the server, which would mean SSH access to
@@ -429,7 +433,7 @@ bitten by: [docs/agents.md](docs/agents.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.28 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.29 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
