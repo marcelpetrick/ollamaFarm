@@ -65,7 +65,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.11"
+VERSION="0.0.12"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -534,9 +534,12 @@ while true; do
   # The version rides in the title, so a screenshot or a pasted frame identifies
   # exactly which build produced it.
   hdr_title="┌─ Ollama farm ${VERSION} "
+  # Two columns past the status line, so the closing corner clears the final "]"
+  # of the key hint instead of sitting flush against it.
+  HDR_OVERHANG=2
   # Clamp to the terminal so the pause badge, which sits outside the box, cannot
   # push the header past the right edge on a narrow window.
-  hdr_target=${#line2_plain}
+  hdr_target=$(( ${#line2_plain} + HDR_OVERHANG ))
   max_target=$(( TERM_COLS - ${#hdr_plain} ))
   [ "$hdr_target" -gt "$max_target" ] && hdr_target="$max_target"
   rule_w=$(( hdr_target - ${#hdr_title} - 1 ))
