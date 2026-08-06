@@ -9,6 +9,11 @@ one that watches for the silent ways a local LLM box loses most of its speed.**
 
 One file, no runtime, no daemon: `curl` + `jq` + `awk` and a terminal.
 
+[![ollamaFarm screen recording preview](media/showcase_preview.gif)](media/showcase.webm)
+
+<sub>Click the preview for the full-quality recording
+([`media/showcase.webm`](media/showcase.webm), VP9, 38 s).</sub>
+
 ![ollamaFarm watching three Ollama hosts](media/currentState.png)
 
 <sub>Three hosts, one of them found by discovery (`.54`, with no known VRAM ceiling, so
@@ -45,7 +50,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.24 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.25 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +75,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.24 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.25 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -426,7 +431,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.24 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.25 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
