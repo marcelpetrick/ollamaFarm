@@ -1,5 +1,20 @@
 #!/usr/bin/env bash
+#
 # ollamaFarm.sh — live view of the Ollama servers on the local network.
+#
+# Copyright (C) 2026 Marcel Petrick <mail@marcelpetrick.it>
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <https://www.gnu.org/licenses/>.
 #
 # A btop-style monitor for a small farm of Ollama hosts. Beyond "what is loaded",
 # it watches for the four failure modes that this hardware actually suffers from,
@@ -51,7 +66,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.5"
+VERSION="0.0.6"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -110,7 +125,15 @@ save_config() {
 load_config
 
 # --------------------------------------------------------------- arguments ----
-usage() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; }
+# Print the leading comment block as help. Derived structurally rather than from
+# hardcoded line numbers -- the previous "sed 2,60p" silently started dumping the
+# licence header and truncating the usage text the moment anything above it grew.
+usage() {
+  awk 'NR>1 { if ($0 !~ /^#/) exit; print }' "$0" \
+    | sed '/^# Copyright (C)/,/^# this program\. If not, see/d' \
+    | sed 's/^#$//; s/^# \{0,1\}//' \
+    | awk 'NF || p { print; p = NF }'
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
