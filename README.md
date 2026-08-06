@@ -1,11 +1,19 @@
-# `ollamaFarm.sh`
+# ollamaFarm
 
-A btop-style live monitor for a small farm of Ollama servers.
+**A btop-style live monitor for a small farm of [Ollama](https://ollama.com) servers —
+one that watches for the silent ways a local LLM box loses most of its speed.**
+
+[![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
+[![license: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
+[![shellcheck: clean](https://img.shields.io/badge/shellcheck-clean-brightgreen)](https://www.shellcheck.net/)
+
+One file, no runtime, no daemon: `curl` + `jq` + `awk` and a terminal.
 
 `ollama ps` tells you what is loaded. This tells you what is *going wrong* — because
 on this hardware the expensive mistakes are all silent: nothing errors, nothing warns,
 the model answers correctly, and you simply lose a factor of 5 to 7 in throughput.
-Every check below exists because it was measured costing real time (`review2.md`).
+Every check below exists because it was measured costing real time on real hardware
+(see [Where the numbers come from](#where-the-numbers-come-from)).
 
 ---
 
@@ -201,6 +209,55 @@ as of 2026-08-06 SSH to both hosts is refused (`publickey,password`). The `--ssh
 **Whether a model is actively generating.** `/api/ps` reports residency, not activity.
 The latency figure is the closest available proxy: a host busy generating answers
 `/api/ps` more slowly, which is why it turns yellow above 400 ms and red above 1500 ms.
+
+---
+
+## Where the numbers come from
+
+Every cost quoted above — `~70 s`, `5.3×`, `~35%`, the 16k cap — was measured, not
+estimated, during a benchmarking exercise across two Ollama servers: a dual-GPU box
+with 36.1 GB of usable VRAM (Ollama 0.32.5) and a 12.2 GB box (Ollama 0.30.6), over
+13 model configurations of the qwen3.5/3.6 family.
+
+| Claim | How it was established |
+|---|---|
+| eviction costs **~70 s** | loaded a 9 GB model beside a resident 33 GB MoE; the MoE was unloaded, and the next request took 70.2 s end to end |
+| split placement costs **5.3×** | same weights, same quantisation, only `num_ctx` changed: 29.6 tok/s fully resident vs 5.6 tok/s with 4.58 GB of 36.65 GB pushed to system RAM |
+| `presence_penalty` costs **~35%** | isolated at fixed weights, context and VRAM: 84.4 tok/s at the vendor default of 1.5, 129.5 tok/s at 0 |
+| bare tags cap at **16384** | sent 4k/16k/32k/50k-token prompts through `/v1/messages`; processed counts pinned at 16386 past the cap, and `tool_use` blocks stopped appearing, with no error at any layer |
+
+Two caveats stated honestly, because they bound how far these numbers travel:
+
+- They are **specific to that hardware and those models.** The `~70 s` reload is what a
+  33 GB MoE costs; a smaller model reloads faster. The eviction message quotes the
+  figure it was calibrated against rather than computing a per-model estimate.
+- The `num_ctx`-overflow behaviour behind the 16k finding turned out to be **version
+  dependent**: on Ollama 0.32.5 an overflowing prompt is truncated to `num_ctx/2`,
+  while 0.30.6 fills the window normally. Treat a newer Ollama as something to
+  re-measure, not to assume is better.
+
+The full write-up lives with the original benchmarking work in
+[codingWithGPT](https://github.com/marcelpetrick/codingWithGPT) under
+`ollamaClaudeCode_v1/` (`review2.md`, `evaluation.pdf`). This repository carries only
+the monitor.
+
+---
+
+## Development
+
+```shell
+./localPipeline.sh          # syntax, shellcheck, docs and smoke checks + summary
+./localPipeline.sh --help
+```
+
+The pipeline is self-contained and needs no network for its mandatory stages; the live
+smoke test against a real server is optional and skipped when no host answers.
+
+---
+
+## License
+
+GPLv3. See [LICENSE](LICENSE).
 
 ---
 

@@ -3,7 +3,7 @@
 #
 # A btop-style monitor for a small farm of Ollama hosts. Beyond "what is loaded",
 # it watches for the four failure modes that this hardware actually suffers from,
-# every one of which is silent through the API (measurements: review2.md):
+# every one of which is silent through the API (see "Where the numbers come from" in README.md):
 #
 #   1. EVICTION THRASH — a second model displaces the resident one. On the 36 GB
 #      box the 33 GB MoE plus anything else does not fit, so any second model
@@ -51,7 +51,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.4"
+VERSION="0.0.5"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -72,7 +72,7 @@ SHOW_EVENTS=1
 PAUSED=0
 SHOW_HELP=0
 
-# Measured usable VRAM ceilings (review.md / review2.md). Used only to draw bars.
+# Measured usable VRAM ceilings (see README.md). Used only to draw bars.
 # Absent host => "?" and no bar; nothing here is inferred.
 declare -A VRAM_TOTAL=( [192.168.100.37]=12.2 [192.168.100.67]=36.1 )
 
@@ -480,7 +480,7 @@ help_overlay() {
   emit '    %sh ?%s  close this help\n' "$C_B" "$C_RST"
   emit '  %sWatched failure modes: eviction thrash (~70 s reload), split placement\n' "$C_DIM"
   emit '  (5.3x slower), missing baked num_ctx (16k cap, tool calls die),\n'
-  emit '  presence_penalty != 0 (~35%% slower). See review2.md.%s\n' "$C_RST"
+  emit '  presence_penalty != 0 (~35%% slower). See README.md.%s\n' "$C_RST"
 }
 
 # ------------------------------------------------------------------- main ------
