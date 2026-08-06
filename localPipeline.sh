@@ -207,7 +207,7 @@ stage_doc_agreement() {
   local caseblock readme_text f
   caseblock=$(awk '/^while \[ \$# -gt 0 \]/,/^done/' "$SCRIPT")
   readme_text=$(cat "$README")
-  for f in -n -H -p -D --ssh --no-color --help; do
+  for f in -n -H -p -D --no-color --help; do
     [[ "$readme_text" == *"$f"* ]] || continue
     [[ "$caseblock" == *"$f)"* || "$caseblock" == *"$f|"* ]] || problems+="$f "
   done

@@ -36,7 +36,7 @@
 #   -  /  +    faster / slower refresh      p   pause (p again to resume)
 #   v          VRAM bars on/off             m   per-model detail on/off
 #   w          warnings on/off              e   event log on/off
-#   d          re-run host discovery        s   toggle nvidia-smi over SSH
+#   d          re-run host discovery
 #   h  or  ?   help overlay                 q   quit
 #
 # Usage:
@@ -44,17 +44,15 @@
 #   ./ollamaFarm.sh -n 2               # every 2 s
 #   ./ollamaFarm.sh -H 192.168.100.67,192.168.100.99
 #   ./ollamaFarm.sh -D                 # discover hosts on the /24 at startup
-#   ./ollamaFarm.sh --ssh              # also pull nvidia-smi over SSH (needs keys)
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
 #
 # Settings (interval and toggles) persist to $XDG_CONFIG_HOME/ollamafarm/config,
 # so the refresh rate you picked is still there next time.
 #
-# On GPU temperature: the Ollama HTTP API does not expose temperature, fan, power
-# or GPU utilisation — it reports model residency only. Those counters live in
-# nvidia-smi on the server. As of 2026-08-06 SSH to both hosts is refused
-# (publickey,password), so the --ssh path is present but inert until key access
-# exists. Everything else shown is real API data.
+# Scope: this monitor reads the Ollama HTTP API and nothing else. GPU temperature,
+# utilisation, fan and power are therefore out of scope -- the API does not expose
+# them, and reaching nvidia-smi on the hosts would need SSH access this tool does not
+# assume it has. Everything shown is real API data.
 #
 # On discovery: hosts are found by probing /api/version across the /24. Usable
 # VRAM is deliberately NOT probed — establishing it means pushing num_ctx until
@@ -66,13 +64,12 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.8"
+VERSION="0.0.9"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
 DEFAULT_HOSTS="192.168.100.37 192.168.100.67"
 HOSTS="$DEFAULT_HOSTS"
-USE_SSH=0
 DO_DISCOVER=0
 WANT_COLOR=auto
 HOSTS_FROM_ARG=0
@@ -154,7 +151,6 @@ while [ $# -gt 0 ]; do
     -p|--port)    [ $# -ge 2 ] || { echo "-p needs a value" >&2; exit 2; }
                   PORT="$2"; shift 2 ;;
     -D|--discover) DO_DISCOVER=1; shift ;;
-    --ssh)        USE_SSH=1; shift ;;
     --no-color)   WANT_COLOR=never; shift ;;
     --color)      WANT_COLOR=always; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -469,27 +465,6 @@ render_host() {
           (.details.parameter_size // "?") ] | @tsv' 2>/dev/null)
   fi
 
-  # ---- optional nvidia-smi over SSH ----
-  if [ "$USE_SSH" = "1" ]; then
-    local smi
-    smi=$(timeout 2 ssh -o BatchMode=yes -o ConnectTimeout=1 "$host" \
-      'nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits' 2>/dev/null)
-    if [ -n "$smi" ]; then
-      while IFS=, read -r idx gname temp util mused mtotal pwr; do
-        [ -z "$idx" ] && continue
-        local tc=$C_GRN
-        temp=$(echo "$temp" | xargs)
-        [[ "$temp" =~ ^[0-9]+$ ]] && { [ "$temp" -ge 75 ] && tc=$C_YEL; [ "$temp" -ge 85 ] && tc=$C_RED; }
-        emit '        %sGPU%s %s %s%s°C%s  %s%% util  %s/%s MiB  %sW\n' \
-          "$C_DIM" "$(echo "$idx"|xargs)" "$(echo "$gname"|xargs)" \
-          "$tc" "$temp" "$C_RST" \
-          "$(echo "$util"|xargs)" "$(echo "$mused"|xargs)" \
-          "$(echo "$mtotal"|xargs)" "$(echo "$pwr"|xargs)"
-      done <<< "$smi"
-    else
-      emit '        %sssh/nvidia-smi unavailable (no key access)%s\n' "$C_DIM" "$C_RST"
-    fi
-  fi
 }
 
 help_overlay() {
@@ -498,8 +473,8 @@ help_overlay() {
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %sv%s    VRAM bars                  %sm%s  model detail   %sw%s  warnings\n' \
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
-  emit '    %se%s    event log                  %sd%s  re-discover    %ss%s  ssh/nvidia-smi\n' \
-    "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
+  emit '    %se%s    event log                  %sd%s  re-discover\n' \
+    "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %sh ?%s  close this help\n' "$C_B" "$C_RST"
   emit '  %sWatched failure modes: eviction thrash (~70 s reload), split placement\n' "$C_DIM"
   emit '  (5.3x slower), missing baked num_ctx (16k cap, tool calls die),\n'
@@ -550,7 +525,7 @@ while true; do
   # which left a long tail of box characters running past the text. So the status
   # line is built as a plain twin first and measured, and the rule is cut to that
   # width. ${#...} on the coloured version would count escape bytes as characters.
-  keyhint='[+ slower  - faster  v m w e  d s  p pause  h help  q quit]'
+  keyhint='[+ slower  - faster  v m w e  d  p pause  h help  q quit]'
   stamp=$(date '+%Y-%m-%d %H:%M:%S')
   printf -v line2_plain '  %s   every %ss   %s%s' "$stamp" "$INTERVAL" "$keyhint" "$off_plain"
 
@@ -598,10 +573,6 @@ while true; do
     OUT+=$'\n'
   fi
 
-  if [ "$USE_SSH" = "0" ]; then
-    emit '  %sGPU temp/util/power need nvidia-smi on the host — press s once key access exists.%s\n' \
-         "$C_DIM" "$C_RST"
-  fi
 
   # Frame painting. Two things are needed to stop the display corrupting, and the
   # first version had neither:
@@ -642,7 +613,6 @@ while true; do
     e|E)  SHOW_EVENTS=$((1-SHOW_EVENTS)); save_config ;;
     p|P)  PAUSED=$((1-PAUSED)) ;;
     h|H|\?) SHOW_HELP=$((1-SHOW_HELP)) ;;
-    s|S)  USE_SSH=$((1-USE_SSH)) ;;
     d|D)  discover "$HOSTS" ;;
     q|Q)  cleanup ;;
   esac

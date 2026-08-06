@@ -36,21 +36,18 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm ────────────────────────────────────────────────────────────────────────────────────────┐
-  2026-08-06 14:42:06   every 1s   [+ slower  - faster  v m w e  d s  p pause  h help  q quit]
+┌─ Ollama farm ────────────────────────────────────────────────────────────────────────────┐
+  2026-08-06 15:23:16   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    7ms
-      qwen3.5:9b-ctx80k                9.7B Q4_K_M   8.01/8.01  GB ctx 81920   ttl 3m10s
+      qwen3.5:9b-ctx80k                9.7B Q4_K_M   8.01/8.01  GB ctx 81920   ttl 29m38s
         ↳ presence_penalty=1.5 (~35% slower — bake 0);
 
-  192.168.100.67   ollama 0.32.5  ████████████████████░░  33.1/36.1 GB    6ms
+  192.168.100.67   ollama 0.32.5  ████████████████████░░  33.1/36.1 GB    7ms
       qwen3.6:35b-a3b-q4_K_M-agentic  36.0B Q4_K_M  33.09/33.09 GB ctx 262144  ttl 1h57m
 
   EVENTS
-    14:42:06 loaded qwen3.5:9b-ctx80k on 192.168.100.37
-    14:42:06 loaded qwen3.6:35b-a3b-q4_K_M-agentic on 192.168.100.67
-
-  GPU temp/util/power need nvidia-smi on the host — press s once key access exists.
+    15:23:16 loaded qwen3.5:9b-ctx80k on 192.168.100.37
 ```
 
 Note the `↳` line: `.37`'s model is running the qwen vendor default
@@ -65,7 +62,7 @@ Every other example in this file is real captured output.
 
 ```
 ┌─ Ollama farm ───────────────────────────────────────────────────────  PAUSED — press p to resume ┐
-  2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d s  p pause  h help  q quit]
+  2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
       hoarder-70b:q8_0                69.9B Q8_0    31.40/35.80 GB ctx 4096    ttl 12s   ⚠ SPLIT→CPU (5.3x slower)
@@ -105,7 +102,6 @@ VRAM ceiling is honestly `?` rather than guessed.
 | `w` | the `↳` config warnings |
 | `e` | event log |
 | `d` | re-run host discovery |
-| `s` | nvidia-smi over SSH |
 | `h` or `?` | help overlay |
 | `q` | quit |
 
@@ -124,7 +120,6 @@ broken.
 ./ollamaFarm.sh -H 10.0.0.5,10.0.0.6
 ./ollamaFarm.sh -p 11435           # non-default port
 ./ollamaFarm.sh -D                 # scan for hosts at startup
-./ollamaFarm.sh --ssh              # add nvidia-smi over SSH
 ./ollamaFarm.sh --no-color         # plain; NO_COLOR is honoured too
 ./ollamaFarm.sh --help
 ```
@@ -202,9 +197,14 @@ The monitor never loads, unloads, or creates a model.
 ## What it cannot show
 
 **GPU temperature, utilisation, fan and power.** The Ollama HTTP API does not expose
-them — it reports model residency only. They live in `nvidia-smi` on the server, and
-as of 2026-08-06 SSH to both hosts is refused (`publickey,password`). The `--ssh` /
-`s` path is implemented and inert until key access exists; it is not faked.
+them — it reports model residency only. Those counters live in `nvidia-smi` on the
+server itself, so reading them would mean SSH access to every host.
+
+That is deliberately out of scope. This tool talks to one HTTP API and needs no
+credentials, no agent and no account on the machines it watches, which is what makes
+it safe to point at a colleague's server. An earlier version shipped an `--ssh` flag
+that was permanently inert because the key access never materialised; a feature that
+never works is worse than an absent one, so it was removed.
 
 **Whether a model is actively generating.** `/api/ps` reports residency, not activity.
 The latency figure is the closest available proxy: a host busy generating answers
