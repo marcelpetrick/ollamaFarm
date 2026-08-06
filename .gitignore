@@ -1,9 +1,0 @@
-# localPipeline.sh writes its logs to a temp dir by default; --report-dir may point
-# somewhere inside the tree.
-pipeline-logs/
-*.log
-
-# Editor and OS noise
-*~
-.*.swp
-.DS_Store
