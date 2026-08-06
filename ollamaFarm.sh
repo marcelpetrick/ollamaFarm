@@ -66,7 +66,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.7"
+VERSION="0.0.8"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -536,22 +536,38 @@ while true; do
     hdr_plain="   PAUSED — press p to resume "
     hdr_state="  ${C_YEL}${C_REV} PAUSED — press p to resume ${C_RST}"
   fi
-  off=""
-  [ "$SHOW_MODELS" = "0" ] && off+=" models:off(m)"
-  [ "$SHOW_BARS"   = "0" ] && off+=" bars:off(v)"
-  [ "$SHOW_WARN"   = "0" ] && off+=" warnings:off(w)"
-  [ "$SHOW_EVENTS" = "0" ] && off+=" events:off(e)"
-  [ -n "$off" ] && off="  ${C_YEL}hidden:${off}${C_RST}"
+  off=""; off_plain=""
+  [ "$SHOW_MODELS" = "0" ] && off_plain+=" models:off(m)"
+  [ "$SHOW_BARS"   = "0" ] && off_plain+=" bars:off(v)"
+  [ "$SHOW_WARN"   = "0" ] && off_plain+=" warnings:off(w)"
+  [ "$SHOW_EVENTS" = "0" ] && off_plain+=" events:off(e)"
+  if [ -n "$off_plain" ]; then
+    off="  ${C_YEL}hidden:${off_plain}${C_RST}"
+    off_plain="  hidden:${off_plain}"
+  fi
 
-  # Rule stretched to the terminal width: ┌─ Ollama farm ──…──┐
+  # The rule spans exactly the status line beneath it -- not the whole terminal,
+  # which left a long tail of box characters running past the text. So the status
+  # line is built as a plain twin first and measured, and the rule is cut to that
+  # width. ${#...} on the coloured version would count escape bytes as characters.
+  keyhint='[+ slower  - faster  v m w e  d s  p pause  h help  q quit]'
+  stamp=$(date '+%Y-%m-%d %H:%M:%S')
+  printf -v line2_plain '  %s   every %ss   %s%s' "$stamp" "$INTERVAL" "$keyhint" "$off_plain"
+
   hdr_title='┌─ Ollama farm '
-  rule_w=$(( TERM_COLS - ${#hdr_title} - ${#hdr_plain} - 1 ))
+  # Clamp to the terminal so the pause badge, which sits outside the box, cannot
+  # push the header past the right edge on a narrow window.
+  hdr_target=${#line2_plain}
+  max_target=$(( TERM_COLS - ${#hdr_plain} ))
+  [ "$hdr_target" -gt "$max_target" ] && hdr_target="$max_target"
+  rule_w=$(( hdr_target - ${#hdr_title} - 1 ))
   [ "$rule_w" -lt 3 ] && rule_w=3
   printf -v hdr_rule '%*s' "$rule_w" ''
   hdr_rule="${hdr_rule// /─}"
+
   emit '%s%s%s┐%s%s\n' "$C_B" "$hdr_title" "$hdr_rule" "$C_RST" "$hdr_state"
-  emit '  %s%s   every %ss%s   %s[+ slower  - faster  v m w e  d s  p pause  h help  q quit]%s%s\n\n' \
-       "$C_DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$INTERVAL" "$C_RST" "$C_DIM" "$C_RST" "$off"
+  emit '  %s%s   every %ss%s   %s%s%s%s\n\n' \
+       "$C_DIM" "$stamp" "$INTERVAL" "$C_RST" "$C_DIM" "$keyhint" "$C_RST" "$off"
 
   if [ "$SHOW_HELP" = "1" ]; then
     help_overlay
