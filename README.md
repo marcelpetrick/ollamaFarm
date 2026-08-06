@@ -45,7 +45,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.14 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.15 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +70,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.14 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.15 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -111,6 +111,7 @@ VRAM ceiling is honestly `?` rather than guessed.
 | `w` | the `↳` config warnings |
 | `e` | event log |
 | `d` | re-run host discovery |
+| `t` | cycle colour theme (`dark` → `vivid` → `light`) |
 | `h` or `?` | help overlay |
 | `q` | quit |
 
@@ -129,6 +130,7 @@ broken.
 ./ollamaFarm.sh -H 10.0.0.5,10.0.0.6
 ./ollamaFarm.sh -p 11435           # non-default port
 ./ollamaFarm.sh -D                 # scan for hosts at startup
+./ollamaFarm.sh --theme light      # dark (default) | vivid | light
 ./ollamaFarm.sh --no-color         # plain; NO_COLOR is honoured too
 ./ollamaFarm.sh --version          # print the version and exit
 ./ollamaFarm.sh --help
@@ -170,6 +172,32 @@ declare -A VRAM_TOTAL=( [192.168.100.37]=12.2 [192.168.100.67]=36.1 )
 
 ---
 
+## Themes
+
+Three, cycled with `t` or chosen with `--theme`:
+
+| theme | for | palette |
+|---|---|---|
+| `dark` *(default)* | any terminal, including a plain tty | ANSI 8-colour, so it inherits **your** palette |
+| `vivid` | dark background, 256-colour terminal | saturated red/green/blue triad, bold on the strong states |
+| `light` | light background | dark ends of each hue — forest green, brick red, dark amber |
+
+The palette changes; **the meaning never does.** In every theme green is healthy, red
+is costing you throughput right now, and yellow is about to change. That is the whole
+point of colouring a monitor, so a theme may repaint a slot but must not repurpose it.
+
+Two notes on the choices:
+
+- `light` avoids yellow entirely — it is unreadable on white — and uses dark amber
+  instead. It also sets an explicit grey for secondary text, because the ANSI *dim
+  attribute* renders as barely-there on a light background in several terminals.
+- `dark` deliberately stays 8-colour rather than looking nicer. It is the fallback
+  that has to work over serial, in a VM console, and under `TERM=linux`.
+
+`--no-color` and `NO_COLOR` bypass theming entirely and emit no escape sequences.
+
+---
+
 ## Configuration
 
 Interval and toggles persist to `$XDG_CONFIG_HOME/ollamafarm/config`
@@ -181,6 +209,7 @@ show_bars=1
 show_models=1
 show_warn=1
 show_events=1
+theme=dark
 ```
 
 Only these keys are read back, and each is validated on load, so a corrupt or
@@ -269,7 +298,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.14 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.15 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it. Tags are `v0.0.N`.
 
 While the major version is `0` the interface is not stable.

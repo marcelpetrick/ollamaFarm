@@ -207,7 +207,7 @@ stage_doc_agreement() {
   local caseblock readme_text f
   caseblock=$(awk '/^while \[ \$# -gt 0 \]/,/^done/' "$SCRIPT")
   readme_text=$(cat "$README")
-  for f in -n -H -p -D --no-color --version --help; do
+  for f in -n -H -p -D --theme --no-color --version --help; do
     [[ "$readme_text" == *"$f"* ]] || continue
     [[ "$caseblock" == *"$f)"* || "$caseblock" == *"$f|"* ]] || problems+="$f "
   done
@@ -230,7 +230,7 @@ stage_doc_agreement() {
 
   # Config keys written must be the same set the README documents.
   local k
-  for k in idx show_bars show_models show_warn show_events; do
+  for k in idx show_bars show_models show_warn show_events theme; do
     grep -qF "$k" "$README" || problems+="cfg:$k "
     grep -qF "$k" "$SCRIPT" || problems+="cfg:$k(script) "
   done

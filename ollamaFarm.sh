@@ -36,7 +36,7 @@
 #   -  /  +    faster / slower refresh      p   pause (p again to resume)
 #   v          VRAM bars on/off             m   per-model detail on/off
 #   w          warnings on/off              e   event log on/off
-#   d          re-run host discovery
+#   d          re-run host discovery        t   cycle colour theme
 #   h  or  ?   help overlay                 q   quit
 #
 # Usage:
@@ -44,6 +44,7 @@
 #   ./ollamaFarm.sh -n 2               # every 2 s
 #   ./ollamaFarm.sh -H 192.168.100.67,192.168.100.99
 #   ./ollamaFarm.sh -D                 # discover hosts on the /24 at startup
+#   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
 #   ./ollamaFarm.sh --version          # print the version and exit
 #
@@ -65,7 +66,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.14"
+VERSION="0.0.15"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -73,6 +74,10 @@ DEFAULT_HOSTS="192.168.100.37 192.168.100.67"
 HOSTS="$DEFAULT_HOSTS"
 DO_DISCOVER=0
 WANT_COLOR=auto
+# Colour themes, cycled by the "t" key in this order. "dark" is plain ANSI so it
+# works on any terminal; the other two assume 256-colour support.
+THEMES=(dark vivid light)
+THEME=dark
 HOSTS_FROM_ARG=0
 
 # Interval ladder, btop-style: + and - step through it rather than free-typing.
@@ -98,7 +103,7 @@ CACHE_HOSTS="$CFG_DIR/hosts"
 # hand-edited config must not be able to break the run or inject commands.
 load_config() {
   [ -r "$CFG" ] || return 0
-  local k v
+  local k v t
   while IFS='=' read -r k v; do
     case "$k" in
       idx)          [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -lt "${#INTERVALS[@]}" ] && IDX="$v" ;;
@@ -106,6 +111,7 @@ load_config() {
       show_models)  [[ "$v" =~ ^[01]$ ]] && SHOW_MODELS="$v" ;;
       show_warn)    [[ "$v" =~ ^[01]$ ]] && SHOW_WARN="$v" ;;
       show_events)  [[ "$v" =~ ^[01]$ ]] && SHOW_EVENTS="$v" ;;
+      theme)        for t in "${THEMES[@]}"; do [ "$v" = "$t" ] && THEME="$v"; done ;;
     esac
   done < "$CFG"
 }
@@ -117,6 +123,7 @@ save_config() {
     printf 'show_models=%s\n' "$SHOW_MODELS"
     printf 'show_warn=%s\n' "$SHOW_WARN"
     printf 'show_events=%s\n' "$SHOW_EVENTS"
+    printf 'theme=%s\n' "$THEME"
   } > "$CFG.tmp" 2>/dev/null && mv -f "$CFG.tmp" "$CFG" 2>/dev/null
 }
 
@@ -152,6 +159,11 @@ while [ $# -gt 0 ]; do
     -p|--port)    [ $# -ge 2 ] || { echo "-p needs a value" >&2; exit 2; }
                   PORT="$2"; shift 2 ;;
     -D|--discover) DO_DISCOVER=1; shift ;;
+    --theme)      [ $# -ge 2 ] || { echo "--theme needs a value" >&2; exit 2; }
+                  THEME=""
+                  for t in "${THEMES[@]}"; do [ "$2" = "$t" ] && THEME="$2"; done
+                  [ -n "$THEME" ] || { echo "unknown theme: $2 (have: ${THEMES[*]})" >&2; exit 2; }
+                  shift 2 ;;
     --no-color)   WANT_COLOR=never; shift ;;
     --color)      WANT_COLOR=always; shift ;;
     -V|--version) printf 'ollamaFarm.sh %s\n' "$VERSION"; exit 0 ;;
@@ -168,22 +180,62 @@ for dep in curl jq awk; do
 done
 
 # ------------------------------------------------------------------ colours ---
-# Colour encodes STATE, never decoration: green = healthy/resident,
-# red = actively costing you performance, yellow = about to change.
+# Colour encodes STATE, never decoration: C_GRN = healthy/resident,
+# C_RED = actively costing you performance now, C_YEL = about to change.
+#
+# A theme repaints those slots; it must never repurpose them. Whatever the palette,
+# the green thing is fine and the red thing is costing you throughput -- otherwise
+# the display stops being readable at a glance, which is the only reason it exists.
+#
+# Slots: C_GRN good · C_YEL warning · C_RED bad · C_CYA figures · C_MAG model names
+#        C_DIM secondary text · C_B emphasis · C_REV inverted badge
 use_color=1
 case "$WANT_COLOR" in
   never)  use_color=0 ;;
   always) use_color=1 ;;
   auto)   { [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; } || use_color=0 ;;
 esac
-if [ "$use_color" = "1" ]; then
-  C_RST=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_REV=$'\e[7m'
-  C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_RED=$'\e[31m'
-  C_CYA=$'\e[36m'; C_MAG=$'\e[35m'
-else
-  C_RST=""; C_DIM=""; C_B=""; C_REV=""
-  C_GRN=""; C_YEL=""; C_RED=""; C_CYA=""; C_MAG=""
-fi
+
+apply_theme() {
+  if [ "$use_color" != "1" ]; then
+    C_RST=""; C_DIM=""; C_B=""; C_REV=""
+    C_GRN=""; C_YEL=""; C_RED=""; C_CYA=""; C_MAG=""
+    return 0
+  fi
+  C_RST=$'\e[0m'; C_B=$'\e[1m'; C_REV=$'\e[7m'
+  case "$1" in
+    vivid)
+      # 256-colour, saturated, with the red/green/blue triad carrying the states and
+      # bold on the strong ones. Assumes a dark background and a 256-colour terminal.
+      C_DIM=$'\e[38;5;245m'
+      C_GRN=$'\e[1;38;5;41m'    # spring green
+      C_YEL=$'\e[1;38;5;214m'   # amber
+      C_RED=$'\e[1;38;5;197m'   # hot red
+      C_CYA=$'\e[38;5;39m'      # azure — figures
+      C_MAG=$'\e[38;5;141m'     # violet — model names
+      ;;
+    light)
+      # For a light terminal background: the ANSI defaults wash out on white, so
+      # these are the dark ends of each hue, chosen for contrast rather than punch.
+      # C_DIM is an explicit grey, because the dim *attribute* on a light background
+      # renders as barely-there on several terminals.
+      C_DIM=$'\e[38;5;242m'
+      C_GRN=$'\e[38;5;28m'      # forest green
+      C_YEL=$'\e[38;5;130m'     # dark amber (yellow is unreadable on white)
+      C_RED=$'\e[38;5;124m'     # brick red
+      C_CYA=$'\e[38;5;24m'      # deep teal — figures
+      C_MAG=$'\e[38;5;90m'      # plum — model names
+      ;;
+    *)
+      # dark (default): plain ANSI 8-colour, so it works on anything, including a
+      # tty with no 256-colour support, and inherits the user's own palette.
+      C_DIM=$'\e[2m'
+      C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_RED=$'\e[31m'
+      C_CYA=$'\e[36m'; C_MAG=$'\e[35m'
+      ;;
+  esac
+}
+apply_theme "$THEME"
 
 # --------------------------------------------------------------- terminal -----
 TTY_STATE=""
@@ -475,8 +527,8 @@ help_overlay() {
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %sv%s    VRAM bars                  %sm%s  model detail   %sw%s  warnings\n' \
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
-  emit '    %se%s    event log                  %sd%s  re-discover\n' \
-    "$C_B" "$C_RST" "$C_B" "$C_RST"
+  emit '    %se%s    event log                  %sd%s  re-discover    %st%s  theme (%s)\n' \
+    "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST" "$THEME"
   emit '    %sh ?%s  close this help\n' "$C_B" "$C_RST"
   emit '  %sWatched failure modes: eviction thrash (~70 s reload), split placement\n' "$C_DIM"
   emit '  (5.3x slower), missing baked num_ctx (16k cap, tool calls die),\n'
@@ -620,6 +672,14 @@ while true; do
     e|E)  SHOW_EVENTS=$((1-SHOW_EVENTS)); save_config ;;
     p|P)  PAUSED=$((1-PAUSED)) ;;
     h|H|\?) SHOW_HELP=$((1-SHOW_HELP)) ;;
+    t|T)  # cycle to the next theme and repaint on the next frame
+          for i in "${!THEMES[@]}"; do
+            if [ "${THEMES[$i]}" = "$THEME" ]; then
+              THEME="${THEMES[$(( (i + 1) % ${#THEMES[@]} ))]}"
+              break
+            fi
+          done
+          apply_theme "$THEME"; save_config ;;
     d|D)  discover "$HOSTS" ;;
     q|Q)  cleanup ;;
   esac
