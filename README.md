@@ -45,7 +45,7 @@ from a *snapshot* of any kind — only a diff across time reveals it.
 Real output, both servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.18 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.19 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
@@ -70,7 +70,7 @@ The following frame is **fabricated** to show the alarm states together — the 
 Every other example in this file is real captured output.
 
 ```
-┌─ Ollama farm 0.0.18 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.19 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -112,6 +112,7 @@ VRAM ceiling is honestly `?` rather than guessed.
 | `e` | event log |
 | `d` | re-run host discovery |
 | `t` | cycle colour theme (`dark` → `vivid` → `light`) |
+| `s` | scan idle hosts for their VRAM ceiling |
 | `h` or `?` | help overlay |
 | `q` | quit |
 
@@ -158,7 +159,7 @@ Two deliberate limits:
 - It only scans `/24`s **derived from hosts it already knows**. It will not find a
   server on an unrelated subnet — blind-scanning arbitrary ranges is not something a
   monitor should do unasked.
-- **Usable VRAM is never probed.** Establishing it means pushing `num_ctx` until the
+- **Usable VRAM is never probed automatically.** Establishing it means pushing `num_ctx` until the
   model spills, which loads models and disturbs a shared machine. Known ceilings are
   the `VRAM_TOTAL` table in the script; anything else displays `?` and gets no bar,
   rather than a fabricated total. There is no VRAM figure anywhere in the Ollama HTTP
@@ -220,6 +221,40 @@ Two notes on the choices:
   extra slots fall back to bold and dim rather than inventing hues.
 
 `--no-color` and `NO_COLOR` bypass theming entirely and emit no escape sequences.
+
+---
+
+## VRAM ceilings
+
+A bar needs a denominator, and the Ollama API does not expose one — there is no
+total-VRAM field on any endpoint. Three sources are used instead, in descending order
+of trust:
+
+| shown as | source | meaning |
+|---|---|---|
+| `33.1/36.1 GB` | the `VRAM_TOTAL` table in the script | a figure someone measured and stands behind |
+| `0.0/5.78+ GB` | **probed** with `s`, or **learned** passively | *at least* this much fits — a lower bound |
+| `0.0 GB/?` | nothing known | no bar drawn, rather than a guessed one |
+
+The **`+` is load-bearing.** A bar that silently meant either "this is the capacity" or
+"it is at least this" would be worse than no bar.
+
+**Learned** costs nothing: `/api/ps` is already polled every frame, so the largest
+total ever seen *fully resident* is recorded as a lower bound. A split total is never
+used — it can be lower than a residency already known to work.
+
+**`s` scans** for a tighter figure by loading a model at escalating `num_ctx` until it
+splits. It is safe to press on a shared server:
+
+- **idle hosts only.** Anything resident and the host is skipped, loudly, naming what
+  it would have had to evict. Evicting a colleague's model costs them a ~70 s reload.
+- `keep_alive: 0` on every load, so nothing is left behind.
+- it runs **detached** — the display keeps refreshing and progress appears in the
+  event log. A second `s` while one is running is refused.
+
+Measured durations: **~15 s** for a small box, and **several minutes** for a large one —
+reach requires a large model, and a 33 GB model alone takes ~70 s per load. The result
+is still a lower bound; see [docs/vram-discovery.md](docs/vram-discovery.md).
 
 ---
 
@@ -323,7 +358,7 @@ smoke test against a real server is optional and skipped when no host answers.
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.18 ──…──┐`) so a screenshot or a pasted frame identifies its
+(`┌─ Ollama farm 0.0.19 ──…──┐`) so a screenshot or a pasted frame identifies its
 build, and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is

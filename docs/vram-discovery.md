@@ -107,6 +107,11 @@ and costs them a 70-second reload, which is not something a monitor may do on it
 
 **Build A and D. Offer C only behind an explicit flag. Never do B alone.**
 
+> **Status 2026-08-06: Phase 1 and Phase 3 are implemented in 0.0.19** — passive
+> learning is always on, and the `s` key runs the scan against idle hosts only.
+> Phase 2 (config override) is not built yet. Measured scan durations: ~15 s for an
+> 8 GB box, several minutes for a 36 GB one.
+
 ### Phase 1 — passive learning (default, zero cost)
 
 1. Track per host, across polls: `observed_max` = largest `Σ size_vram` seen with
@@ -126,7 +131,13 @@ Accept `vram.<host>=<GB>` in the config file, and a `--vram HOST=GB` flag, so a 
 who knows the figure can state it without editing the script. This also lets someone
 correct a bad passive estimate.
 
-### Phase 3 — opt-in active probe (`--probe-vram HOST`)
+### Phase 3 — opt-in active probe (implemented as the `s` key)
+
+Bound to `s` rather than a flag, because it is useful interactively. `--probe-worker`
+is the internal detached entry point. It differs from the plan below in one way: it
+scans **all** currently-known hosts in one pass, skipping the busy ones, instead of
+taking a single host argument.
+
 
 Only when explicitly asked, never from the TUI, never automatically:
 

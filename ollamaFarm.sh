@@ -37,6 +37,7 @@
 #   v          VRAM bars on/off             m   per-model detail on/off
 #   w          warnings on/off              e   event log on/off
 #   d          re-run host discovery        t   cycle colour theme
+#   s          scan idle hosts for their VRAM ceiling (see docs/vram-discovery.md)
 #   h  or  ?   help overlay                 q   quit
 #
 # Usage:
@@ -66,13 +67,14 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.18"
+VERSION="0.0.19"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
 DEFAULT_HOSTS="192.168.100.37 192.168.100.67"
 HOSTS="$DEFAULT_HOSTS"
 DO_DISCOVER=0
+PROBE_WORKER=0
 WANT_COLOR=auto
 # Colour themes, cycled by the "t" key in this order. "dark" is plain ANSI so it
 # works on any terminal; the other two assume 256-colour support.
@@ -97,6 +99,9 @@ declare -A VRAM_TOTAL=( [192.168.100.37]=12.2 [192.168.100.67]=36.1 )
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ollamafarm"
 CFG="$CFG_DIR/config"
 CACHE_HOSTS="$CFG_DIR/hosts"
+CACHE_VRAM="$CFG_DIR/vram"      # learned/probed ceilings, one "host<TAB>gb<TAB>source<TAB>epoch" per line
+PROBE_LOG="$CFG_DIR/probe.log"  # progress written by the background probe worker
+PROBE_LOCK="$CFG_DIR/probe.lock"
 
 # ------------------------------------------------------------ config load -----
 # Only ever read back keys we wrote, and validate each one: a corrupt or
@@ -159,6 +164,8 @@ while [ $# -gt 0 ]; do
     -p|--port)    [ $# -ge 2 ] || { echo "-p needs a value" >&2; exit 2; }
                   PORT="$2"; shift 2 ;;
     -D|--discover) DO_DISCOVER=1; shift ;;
+    --probe-worker) # internal: run the ceiling scan and exit, no TUI
+                  PROBE_WORKER=1; shift ;;
     --theme)      [ $# -ge 2 ] || { echo "--theme needs a value" >&2; exit 2; }
                   THEME=""
                   for t in "${THEMES[@]}"; do [ "$2" = "$t" ] && THEME="$2"; done
@@ -293,6 +300,70 @@ bar() {  # bar <used> <total> <width>
   printf '%s%s%s' "$col" "$out" "$C_RST"
 }
 
+# ------------------------------------------------------ VRAM ceilings ---------
+# Three sources, in descending order of trust:
+#   exact   - the VRAM_TOTAL table, or a user override; a figure someone stands behind
+#   probed  - found by the "s" scan: the largest footprint that stayed fully resident
+#   learned - observed passively: the largest fully-resident total ever seen
+#
+# probed and learned are both LOWER BOUNDS, never totals, and are shown with a "+".
+# The distinction is load-bearing: a bar that silently means either "this is the
+# capacity" or "it is at least this" would be worse than drawing no bar at all.
+# See docs/vram-discovery.md for why a split event cannot be used as a measurement.
+declare -A VRAM_LEARNED=()
+declare -A VRAM_SOURCE=()
+
+load_vram_cache() {
+  [ -r "$CACHE_VRAM" ] || return 0
+  local h g src ts
+  while IFS=$'\t' read -r h g src ts; do
+    [ -n "$h" ] || continue
+    [[ "$g" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
+    case "$src" in probed|learned) ;; *) continue ;; esac
+    VRAM_LEARNED[$h]="$g"; VRAM_SOURCE[$h]="$src"
+  done < "$CACHE_VRAM"
+}
+
+save_vram_cache() {
+  mkdir -p "$CFG_DIR" 2>/dev/null || return 0
+  local h
+  : > "$CACHE_VRAM.tmp" 2>/dev/null || return 0
+  for h in "${!VRAM_LEARNED[@]}"; do
+    printf '%s\t%s\t%s\t%s\n' "$h" "${VRAM_LEARNED[$h]}" "${VRAM_SOURCE[$h]:-learned}" "$(date +%s)" \
+      >> "$CACHE_VRAM.tmp"
+  done
+  mv -f "$CACHE_VRAM.tmp" "$CACHE_VRAM" 2>/dev/null
+}
+
+# Passive learning, free: /api/ps is already polled every frame. Only a total that
+# was FULLY resident counts -- a split tells us capacity is near but is provably not
+# a measurement of it (it can even be below a residency already observed to work).
+note_resident_total() {  # note_resident_total <host> <gb> <any_split:0|1>
+  local host="$1" gb="$2" split="$3"
+  [ "$split" = "0" ] || return 0
+  fgt "$gb" 0 || return 0
+  # never downgrade a probed figure with a smaller passive observation
+  if [ "${VRAM_SOURCE[$host]:-}" = "probed" ] && ! fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
+    return 0
+  fi
+  if fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
+    VRAM_LEARNED[$host]="$gb"
+    [ "${VRAM_SOURCE[$host]:-}" = "probed" ] || VRAM_SOURCE[$host]="learned"
+    save_vram_cache
+    event "$C_DIM" "$host: ceiling at least $(printf '%.1f' "$gb") GB (observed fully resident)"
+  fi
+}
+
+# Echoes "<gb> exact" | "<gb> lower" | "" (unknown)
+ceiling_for() {
+  local host="$1"
+  if [ -n "${VRAM_TOTAL[$host]:-}" ]; then printf '%s exact' "${VRAM_TOTAL[$host]}"; return; fi
+  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then printf '%s lower' "${VRAM_LEARNED[$host]}"; return; fi
+  printf ''
+}
+
+load_vram_cache
+
 # ------------------------------------------------------------- event log ------
 # Ring buffer of state changes. This is where eviction thrash becomes visible:
 # a snapshot cannot show it, only a diff between consecutive polls can.
@@ -409,19 +480,30 @@ render_host() {
   n=$(printf '%s' "$ps" | jq -r '.models | length' 2>/dev/null) || n=0
   [[ "$n" =~ ^[0-9]+$ ]] || n=0
 
-  local total="${VRAM_TOTAL[$host]:-}"
-  local used
+  local used any_split
   used=$(printf '%s' "$ps" | jq -r '[.models[]?.size_vram] | add // 0 | ./1e9' 2>/dev/null) || used=0
   used=$(num "$used")
+  # 1 if any resident model is split to CPU; a split total must not train the ceiling.
+  any_split=$(printf '%s' "$ps" \
+    | jq -r 'if any(.models[]?; .size_vram < .size - 5e7) then 1 else 0 end' 2>/dev/null) || any_split=1
+  [[ "$any_split" =~ ^[01]$ ]] || any_split=1
+  [ "$n" -gt 0 ] && note_resident_total "$host" "$used" "$any_split"
+
+  local total kind
+  read -r total kind <<<"$(ceiling_for "$host")"
+  total="${total:-}"; kind="${kind:-}"
 
   emit '  %s%-16s%s %sollama %-7s%s ' "$C_HOST" "$host" "$C_RST" "$C_LBL" "$ver" "$C_RST"
-  if [ -n "$total" ] && [ "$SHOW_BARS" = "1" ]; then
-    emit '%s ' "$(bar "$used" "$total" 22)"
-    emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
-  elif [ -n "$total" ]; then
-    emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
+  if [ -n "$total" ]; then
+    [ "$SHOW_BARS" = "1" ] && emit '%s ' "$(bar "$used" "$total" 22)"
+    if [ "$kind" = "lower" ]; then
+      # "+" marks a lower bound: at least this much fits, the true ceiling may be more
+      emit '%s%5.1f%s/%s%s+%s GB ' "$C_FIG" "$used" "$C_RST" "$C_LBL" "$total" "$C_RST"
+    else
+      emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
+    fi
   else
-    emit '%s%5.1f GB%s/%s? ' "$C_FIG" "$used" "$C_RST" "$C_DIM$C_RST"
+    emit '%s%5.1f GB%s/%s?%s ' "$C_FIG" "$used" "$C_RST" "$C_DIM" "$C_RST"
   fi
   local lcol=$C_FIG
   [ "$lat" -gt 400 ] && lcol=$C_YEL
@@ -540,13 +622,156 @@ help_overlay() {
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %se%s    event log                  %sd%s  re-discover    %st%s  theme (%s)\n' \
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST" "$THEME"
+  emit '    %ss%s    scan idle hosts for their VRAM ceiling (minutes on a large box)\n' \
+    "$C_B" "$C_RST"
   emit '    %sh ?%s  close this help\n' "$C_B" "$C_RST"
   emit '  %sWatched failure modes: eviction thrash (~70 s reload), split placement\n' "$C_DIM"
   emit '  (5.3x slower), missing baked num_ctx (16k cap, tool calls die),\n'
   emit '  presence_penalty != 0 (~35%% slower). See README.md.%s\n' "$C_RST"
 }
 
+# --------------------------------------------------------------- VRAM probe ----
+# Finds the largest footprint that stays FULLY RESIDENT on a host, by loading a model
+# at escalating num_ctx. That figure is still a lower bound on capacity, but a much
+# tighter one than passive observation usually reaches.
+#
+# Three rules make this safe to bind to a key on somebody else's server:
+#   1. an idle host only. If anything is resident the host is skipped, loudly. Evicting
+#      a colleague's model costs them a ~70 s reload, so the scan never does it.
+#   2. keep_alive 0 on every load, so nothing is left behind.
+#   3. it runs detached, and the UI keeps refreshing. A scan takes ~40-70 s on a small
+#      box and several minutes on a large one, because reach requires a large model and
+#      a 33 GB model alone takes ~70 s to load.
+plog() { printf '%s\n' "$*" >> "$PROBE_LOG"; }
+
+# Load a model at a given num_ctx, then report "<size_vram_gb> <split:0|1>".
+probe_load() {  # probe_load <host> <model> <ctx>
+  local host="$1" model="$2" ctx="$3" base="http://$1:$PORT" r
+  curl -s --max-time 900 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg m "$model" --argjson c "$ctx" \
+          '{model:$m,keep_alive:"60s",options:{num_ctx:$c}}')" >/dev/null 2>&1
+  r=$(curl -s --max-time 10 "$base/api/ps" 2>/dev/null \
+      | jq -r '.models[0] | "\(.size_vram/1e9) \(if .size_vram < .size - 5e7 then 1 else 0 end)"' 2>/dev/null)
+  curl -s --max-time 60 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg m "$model" '{model:$m,keep_alive:0}')" >/dev/null 2>&1
+  [ -n "$r" ] && printf '%s' "$r" || printf '0 1'
+}
+
+probe_host() {
+  local host="$1" base="http://$1:$PORT"
+  local ps n
+  ps=$(curl -s --max-time 5 "$base/api/ps" 2>/dev/null)
+  n=$(printf '%s' "$ps" | jq -r '.models | length' 2>/dev/null) || n=0
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  if [ "$n" != "0" ]; then
+    plog "SKIP $host — not idle, holding: $(printf '%s' "$ps" | jq -r '[.models[].name]|join(", ")' 2>/dev/null)"
+    return 0
+  fi
+
+  # Largest models first: reach is what matters. A small model on a big box stays
+  # resident at its maximum context and reveals nothing about the ceiling.
+  local models
+  models=$(curl -s --max-time 10 "$base/api/tags" 2>/dev/null \
+           | jq -r '.models[]? | "\(.size)\t\(.name)"' 2>/dev/null | sort -rn | cut -f2)
+  [ -n "$models" ] || { plog "SKIP $host — no models on the server"; return 0; }
+
+  local best=0 tried=0 model
+  for model in $models; do
+    [ "$tried" -ge 3 ] && break
+    tried=$((tried + 1))
+
+    local maxctx
+    maxctx=$(curl -s --max-time 10 -X POST "$base/api/show" -H 'Content-Type: application/json' \
+             -d "$(jq -nc --arg m "$model" '{model:$m}')" 2>/dev/null \
+             | jq -r '.model_info | to_entries | map(select(.key|endswith(".context_length"))) | .[0].value // 262144' 2>/dev/null)
+    [[ "$maxctx" =~ ^[0-9]+$ ]] || maxctx=262144
+
+    plog "probe $host: $model (max ctx $maxctx)"
+    local lo=2048 hi="$maxctx" res vram split
+    res=$(probe_load "$host" "$model" "$lo"); vram="${res%% *}"; split="${res##* }"
+    if [ "$split" = "1" ]; then
+      plog "  $model splits even at ctx $lo — too large, trying a smaller model"
+      continue
+    fi
+    fgt "$vram" "$best" && best="$vram"
+    plog "  ctx $lo: resident $(printf '%.2f' "$vram") GB"
+
+    # Binary search the largest fully-resident num_ctx. Bounded at 7 loads.
+    local i=0
+    while [ "$i" -lt 7 ] && [ $(( hi - lo )) -gt 4096 ]; do
+      i=$((i + 1))
+      local mid=$(( (lo + hi) / 2 ))
+      res=$(probe_load "$host" "$model" "$mid"); vram="${res%% *}"; split="${res##* }"
+      if [ "$split" = "0" ]; then
+        lo="$mid"; fgt "$vram" "$best" && best="$vram"
+        plog "  ctx $mid: resident $(printf '%.2f' "$vram") GB"
+      else
+        hi="$mid"
+        plog "  ctx $mid: SPLIT — ceiling is below this"
+      fi
+    done
+    break
+  done
+
+  if fgt "$best" 0; then
+    plog "RESULT $host $(printf '%.2f' "$best")"
+    # Persist from the worker as well, so a standalone --probe-worker run is not lost
+    # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
+    # different host survives.
+    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]=probed
+    save_vram_cache
+  else
+    plog "SKIP $host — could not place any model fully in VRAM"
+  fi
+}
+
+probe_worker() {
+  load_vram_cache
+  : > "$PROBE_LOG"
+  plog "scan started $(date '+%H:%M:%S')"
+  local h
+  for h in $HOSTS; do probe_host "$h"; done
+  plog "scan finished $(date '+%H:%M:%S')"
+  rm -f "$PROBE_LOCK"
+}
+
+# Launch the detached worker, refusing to stack two scans on top of each other.
+start_probe() {
+  if [ -f "$PROBE_LOCK" ] && kill -0 "$(cat "$PROBE_LOCK" 2>/dev/null)" 2>/dev/null; then
+    event "$C_YEL" "a ceiling scan is already running"
+    return 0
+  fi
+  mkdir -p "$CFG_DIR" 2>/dev/null
+  setsid nohup "$0" --probe-worker -H "$(echo "$HOSTS" | tr ' ' ',')" -p "$PORT" \
+    </dev/null >/dev/null 2>&1 &
+  echo $! > "$PROBE_LOCK"
+  PROBE_OFFSET=0
+  event "$C_GRN" "ceiling scan started on idle hosts — minutes on a large box, see events"
+}
+
+# Fold new worker output into the event log, and adopt any RESULT it reports.
+PROBE_OFFSET=0
+drain_probe_log() {
+  [ -r "$PROBE_LOG" ] || return 0
+  local size; size=$(wc -c < "$PROBE_LOG" 2>/dev/null) || return 0
+  [ "$size" -le "$PROBE_OFFSET" ] && return 0
+  local line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      RESULT*) set -- $line
+               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]=probed; save_vram_cache
+               event "$C_GRN" "$2: ceiling at least $3 GB (probed)" ;;
+      SKIP*)   event "$C_YEL" "${line#SKIP }" ;;
+      *)       event "$C_DIM" "$line" ;;
+    esac
+  done < <(tail -c "+$((PROBE_OFFSET + 1))" "$PROBE_LOG" 2>/dev/null)
+  PROBE_OFFSET="$size"
+}
+
 # ------------------------------------------------------------------- main ------
+if [ "$PROBE_WORKER" = "1" ]; then probe_worker; exit 0; fi
+
 printf '\e[?25l'   # hide cursor
 FIRST=1
 while true; do
@@ -590,7 +815,7 @@ while true; do
   # which left a long tail of box characters running past the text. So the status
   # line is built as a plain twin first and measured, and the rule is cut to that
   # width. ${#...} on the coloured version would count escape bytes as characters.
-  keyhint='[+ slower  - faster  v m w e  d  p pause  h help  q quit]'
+  keyhint='[+ slower  - faster  v m w e  d s  p pause  h help  q quit]'
   stamp=$(date '+%Y-%m-%d %H:%M:%S')
   printf -v line2_plain '  %s   every %ss   %s%s' "$stamp" "$INTERVAL" "$keyhint" "$off_plain"
 
@@ -633,6 +858,8 @@ while true; do
   else
     OUT+="${LAST_BODY:-}"
   fi
+
+  drain_probe_log
 
   if [ "$SHOW_EVENTS" = "1" ] && [ "${#EVENTS[@]}" -gt 0 ]; then
     emit '  %sEVENTS%s\n' "$C_HDR" "$C_RST"
@@ -691,6 +918,7 @@ while true; do
             fi
           done
           apply_theme "$THEME"; save_config ;;
+    s|S)  start_probe ;;
     d|D)  discover "$HOSTS" ;;
     q|Q)  cleanup ;;
   esac
