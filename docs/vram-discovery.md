@@ -105,7 +105,7 @@ and costs them a 70-second reload, which is not something a monitor may do on it
 
 ## 5. The plan
 
-**Build A and D. Offer C only behind an explicit flag. Never do B alone.**
+**Build A and D. Offer C behind an explicit action. Never do B alone.**
 
 > **Status 2026-08-06: Phase 1 and Phase 3 are implemented in 0.0.19** — passive
 > learning is always on, and the `s` key runs the scan against idle hosts only.
@@ -131,27 +131,40 @@ Accept `vram.<host>=<GB>` in the config file, and a `--vram HOST=GB` flag, so a 
 who knows the figure can state it without editing the script. This also lets someone
 correct a bad passive estimate.
 
-### Phase 3 — opt-in active probe (implemented as the `s` key)
+### Phase 3 — active scan, implemented as the `s` key
 
-Bound to `s` rather than a flag, because it is useful interactively. `--probe-worker`
-is the internal detached entry point. It differs from the plan below in one way: it
-scans **all** currently-known hosts in one pass, skipping the busy ones, instead of
-taking a single host argument.
+Built, with two deliberate departures from the original plan above:
 
+- **Bound to a key, not only a flag.** The plan said "never from the TUI". That was
+  written to prevent an accidental scan, but the real protection is refusing busy
+  hosts, not hiding the feature — so it is on `s`, guarded by the idle check.
+  `--probe-worker` is the internal detached entry point.
+- **Largest model first, not smallest.** The plan said smallest, to minimise load time.
+  That is wrong: reach is what matters. A small model on a big box stays fully resident
+  at its maximum context and reveals nothing about the ceiling — `qwen3.5:9b` tops out
+  at 14.72 GB on a 36 GB host. The scan therefore starts with the largest model and
+  falls back to smaller ones (up to three) when the largest splits even at ctx 2048.
 
-Only when explicitly asked, never from the TUI, never automatically:
+What it does, per host:
 
-1. Refuse unless the host is idle (`/api/ps` empty). **Do not evict anyone's model** —
-   print what is resident and exit non-zero instead.
-2. Pick the smallest model on that host, to minimise load time.
-3. Binary-search `num_ctx` between the model's minimum and its architectural maximum,
-   loading with `keep_alive: 0` each time, until the largest fully-resident
-   `size_vram` is found.
-4. Record it as `source=probed` and unload.
-5. Print, before starting: what it will load, how long it may take, and that the host
-   must be idle. Require `--yes` to skip the confirmation.
+1. **Refuse unless the host is idle.** If anything is resident, skip it and say so,
+   naming the model that would have been evicted. Never evict — that costs the owner a
+   ~70 s reload.
+2. Pick the largest model, read its architectural maximum context from
+   `/api/show`.
+3. Binary-search `num_ctx` for the largest fully-resident footprint, `keep_alive: 0`
+   on every load so nothing is left behind. Bounded at 7 loads per model.
+4. Record the largest fully-resident `size_vram` as `source=probed` and persist it.
 
-Even then the result is a lower bound, and must be labelled as one.
+It runs detached so the display keeps refreshing, streams progress into the event log,
+and refuses to start a second scan while one is running.
+
+Measured: **15 s** for the 8 GB box (the 11B model split at ctx 2048, fell back to a
+smaller one, converged 2048 → 17408 → 25088 → 28928-split, result 5.78 GB), and the
+36 GB host skipped as busy in the same pass. Ground truth for the 8 GB card is
+8192 MiB, so 5.78 GB is the conservative lower bound this method is expected to give.
+
+Still a lower bound, still labelled with `+`.
 
 ### What will not be built
 
