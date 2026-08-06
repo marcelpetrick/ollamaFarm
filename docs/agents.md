@@ -28,8 +28,8 @@ framework, or a second language.
    that never arrived. Absent beats advertised-but-broken.
 5. **Bump the patch version in every commit.** `VERSION` near the top of
    `ollamaFarm.sh`, and it is shown in the header. See "Versioning" below.
-6. **Conventional Commits, atomic, with a body that explains *why*.** A commit that
-   changes behaviour should say what was measured to justify it.
+6. **Conventional Commits, atomic, with a body that explains *why*.** See
+   "Commit style" below — it is the rule most often got wrong here.
 
 ## Traps specific to this codebase
 
@@ -58,13 +58,76 @@ These have all been hit and fixed once. Do not reintroduce them.
   seconds to a minute later. Detection correlates across polls within
   `SUSPECT_WINDOW`; a naive "vanished while something appeared" test never matches.
 
+## Commit style
+
+**Conventional Commits**, one logical change per commit, with a body that explains
+*why* rather than restating the diff.
+
+```
+<type>[optional scope][!]: <subject in the imperative, lower case, no full stop>
+
+<body: what was wrong, what was measured, why this fix and not another>
+
+[BREAKING CHANGE: <what breaks, for users>]
+```
+
+Types used in this repository:
+
+| type | for |
+|---|---|
+| `feat` | new user-visible capability |
+| `fix` | a defect in behaviour |
+| `refactor` | restructuring with no behaviour change (`refactor!` if something is removed) |
+| `perf` | a measured speed or resource improvement |
+| `style` | appearance only — layout, colour, alignment |
+| `docs` | README, this file, comments |
+| `build` | `localPipeline.sh`, packaging, tooling |
+| `chore` | licence, `.gitignore`, housekeeping |
+
+### Atomic means one reason to change
+
+Do not bundle a fix with the documentation of a *different* fix. Do bundle a code
+change with the doc, README frame, and pipeline check that belong to it — those are
+the same logical change, and splitting them leaves the repository briefly
+self-contradictory.
+
+If work turns out to be two things, commit it as two.
+
+### The body is the point
+
+This project's value is in its measurements, so a commit that changes behaviour
+should say what was observed. Good bodies here have looked like:
+
+- *"Measured on .67: prompts of ~66k and ~132k tokens both report exactly 30002
+  processed tokens"* — the evidence for the change.
+- *"Verified by sabotage: breaking the interval ladder trips stage 6, chmod -x trips
+  stage 4"* — evidence the check actually works, not just that it passed once.
+- *"An earlier version shipped an --ssh flag that was permanently inert"* — why the
+  change is a removal rather than a fix.
+
+State what you did **not** verify, too. "Untested against Ollama 0.30.x" is worth a
+line; a silent gap is not.
+
+### Do not
+
+- Write `fix: bug` / `chore: update` / `docs: improve` — say which bug, what update.
+- Claim a verification you did not run. If `localPipeline.sh` was not run, do not
+  write that it passes.
+- Amend or rebase published history without being asked. The version-per-commit
+  history was rewritten once, deliberately, with a backup branch and a diff proving
+  the trees were identical apart from the intended change.
+- Commit generated artefacts (`~/.config/ollamafarm/*`, pipeline logs, temp files).
+
 ## Versioning
 
 Semantic versioning, patch-per-commit.
 
 - `VERSION="0.0.N"` near the top of `ollamaFarm.sh` is the single source of truth.
-- Increment the patch on **every** commit that touches the tool.
-- The version renders in the header (`┌─ Ollama farm 0.0.9 ──…──┐`), so a screenshot
+- Increment the patch on **every** commit. A docs-only commit still bumps it, so the
+  version identifies a repository state rather than only a code state. Where an image
+  in the docs shows an older version, caption it with the version it was captured
+  from instead of silently letting it drift.
+- The version renders in the header (`┌─ Ollama farm 0.0.N ──…──┐`), so a screenshot
   identifies its build.
 - Tags are `v0.0.N`.
 
@@ -87,5 +150,15 @@ force a major bump yet.
 
 Without an Ollama host, stages 1–9 of the pipeline still run; stage 10 skips. To
 exercise the interesting paths you need a reachable server: point `-H` at one, or
-run `ollama serve` locally and use `-H 127.0.0.1`. To see the eviction detector
-fire, load two models that cannot both fit in VRAM and watch the event log.
+run `ollama serve` locally and use `-H 127.0.0.1`.
+
+**A loopback server is never auto-discovered**, and this is confirmed rather than
+assumed: discovery only scans `/24`s derived from hosts it already knows, so with LAN
+seeds it never probes `127.0.0.0/8`. Measured — a server on `127.0.0.1` was missed by
+`-D`, and found immediately when seeded with `-H 127.0.0.1` (which makes the scan
+range `127.0.0.1-254`). Whether an address is public or private is irrelevant; only
+its numeric range matters.
+
+To see the eviction detector fire, load two models that cannot both fit in VRAM and
+watch the event log. A throwaway HTTP server answering `/api/version` and `/api/ps`
+is enough to exercise rendering without any real model.
