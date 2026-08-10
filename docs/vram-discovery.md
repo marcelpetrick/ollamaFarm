@@ -89,7 +89,7 @@ ceiling ≥ max over time of ( Σ size_vram , when nothing is split )
 This is a hard lower bound — it is a configuration that demonstrably worked. It costs
 nothing extra: `/api/ps` is already polled every frame.
 
-### An upper bound, found later: pin the layer count
+### Found later: pin the layer count
 
 > **Correction, 2026-08-10 (0.0.32).** Everything above measures what Ollama is
 > *willing* to do, and section 3 treats that as the best obtainable. It is not.
@@ -106,24 +106,49 @@ $ curl -s .../api/generate -d '{"model":"qwen2.5-coder:32b","options":{"num_gpu"
  error loading model: unable to allocate CUDA0 buffer"}
 ```
 
-That refusal is an **upper bound** — the first one available anywhere in this
-investigation. Binary-searching `num_ctx` with the layer count pinned closes the ceiling
-from both sides at once, and the result is a bracket rather than an open minimum.
+Binary-searching `num_ctx` with the layer count pinned therefore reaches much closer to
+the real edge of the card than watching for a spill ever could.
 
 Re-measured this way against both live hosts:
 
-| host | old method (Ollama chooses) | pinned layers | bracket |
+| host | old method (Ollama chooses) | pinned layers | search |
 |---|---|---|---|
-| 12 GB box | 12.2 GB | **12.31 GB** | ctx 26920 fit, 28474 OOM'd |
-| dual-GPU box | 36.1 GB | **40.47 GB** | ctx 182896 fit, 184928 OOM'd |
+| 12 GB box | 12.2 GB | **12.31 GB** | ctx 26920 fit, 28474 refused |
+| dual-GPU box | 36.1 GB | **40.47 GB** | ctx 182896 fit, 184928 refused |
 
 The dual-GPU figure was **11% low**, which is 4.3 GB of real headroom that the bar was
-painting as full. The `+` suffix can honestly come off a figure obtained this way; a
-scan that never provokes a refusal (it runs out of context to ask for first) keeps it.
+painting as full.
 
 Cost: a refused load is contained in the `llama-server` subprocess and does not disturb
 the Ollama daemon, which keeps answering `/api/version` and `/api/ps` throughout. The
 idle-host rule still applies, so nothing is ever evicted.
+
+### The refusal is not an upper bound on the machine
+
+This was got wrong first, shipped, and caught during verification — it is worth
+recording rather than quietly fixing.
+
+The refusal looks like the upper bound the investigation had been missing, so the
+scanned figure was briefly promoted to a new `measured` source and the `+` was taken
+off. Then the tool's own scan was run against the dual-GPU host and returned **34.69 GB**
+where the hand-run scan had reached **40.47 GB** — same box, same day, both idle. The
+difference was the model:
+
+| model | largest fully resident | why the scan chose it |
+|---|---|---|
+| `qwen3.6:27b-q8_0` | **40.47 GB** | picked by hand |
+| `qwen3.6:27b-mtp-q8_0-ctx60k` | **34.69 GB** | largest on disk, so the scan takes it first |
+
+**A refusal bounds the configuration that was refused, not the hardware.** A model's
+layers divide unevenly across two cards; one fills while the other still has room, and
+where that wall sits is a property of the model. 5.8 GB of spread between two models on
+one machine is the measurement of that effect.
+
+So `measured` was removed and every scanned figure keeps its `+`. What survives from the
+change is the reach — pinning the layers is still the right thing to do, and it is still
+worth ~11% over the old method — but the claim attached to the result had to come back
+down. Note also that this makes a *larger* passive observation than the scan entirely
+expected, rather than a sign that something has gone wrong.
 
 ## 4. Candidate paths
 
@@ -211,18 +236,20 @@ second bullet:
 
 - Every test load sends **`num_gpu: 999`**, so the search reads the GPU rather than
   Ollama's estimate of it.
-- The stopping condition is an **out-of-memory refusal**, not a split. That refusal is
-  an upper bound, so the result is a bracket and is stored as `source=measured` and
-  drawn without the `+`. A search that exhausts the model's context range without ever
-  provoking one stays `source=probed`, and keeps it.
+- The stopping condition is an **out-of-memory refusal**, not a split. The result is
+  still `source=probed` and still carries the `+` — see "The refusal is not an upper
+  bound on the machine" above; the log records which of the two ended the search, but
+  neither promotes the figure.
 - The fallback budget had to be split in two. With layers pinned, a model whose weights
   alone overflow the card is refused outright instead of quietly splitting, and the
   12 GB host holds seven models in that class — the old "try up to three" gave up before
   reaching one that fitted. Cheap rejections are now counted separately, up to 12.
 
 Measured end to end on the 12 GB host: **103 s**, seven rejections at ~8 s each, then
-`2048 → 21504 → 31232-OOM → 26368 → 28800-OOM`, result **12.20 GB measured**. The
-36 GB figure for the dual-GPU host became **40.4 GB** by the same method.
+`2048 → 21504 → 31232-OOM → 26368 → 28800-OOM`, result **12.20+ GB**. On the dual-GPU
+host the same scan took ~3 min and returned **34.69+ GB**, while a hand-run scan on a
+better-dividing model reached **40.47 GB** — the model-dependence described above, and
+the reason `VRAM_TOTAL` carries the larger, demonstrated figure.
 
 ### What will not be built
 

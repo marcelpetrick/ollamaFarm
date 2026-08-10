@@ -73,14 +73,22 @@ too (see "Do not overclaim").
    decides when to spill, from a pre-flight estimate that deliberately keeps a reserve
    and can only move whole layers. So the split point measures **Ollama's caution, not
    the GPU**. Sending `num_gpu: 999` pins every layer to the card and takes the estimate
-   out of the loop; the CUDA allocator then answers directly, and a refusal
-   (`cudaMalloc failed: out of memory`) is an **upper** bound — the one thing the whole
-   investigation had concluded was unobtainable. With a lid on the search the ceiling is
-   *bracketed* instead of merely floored, and the `+` can honestly come off. The
-   dual-GPU box that had reported **36.1 GB** for months actually holds **40.4 GB**:
-   4.3 GB of real headroom that the bar had been painting as full. Good beat for the
-   article — the tool was wrong, and it was wrong in the direction that looks like
-   caution.
+   out of the loop; the CUDA allocator then answers directly. The dual-GPU box that had
+   reported **36.1 GB** for months demonstrably holds **40.4 GB**: 4.3 GB of real
+   headroom that the bar had been painting as full. Good beat for the article — the tool
+   was wrong, and wrong in the direction that looks like caution.
+
+8c. **Then the fix overreached, and verification caught it — which is the better
+   story.** A `cudaMalloc` refusal looks exactly like the upper bound the whole
+   investigation had concluded was unobtainable, so the scanned figure was promoted and
+   the `+` came off. Running the tool's own scan against the same box returned
+   **34.69 GB** where the hand-run scan had reached **40.47 GB** — same machine, same
+   day, both idle. The variable was the *model*: `qwen3.6:27b-q8_0` divides across the
+   two cards evenly, `qwen3.6:27b-mtp-q8_0-ctx60k` does not, so one card fills while the
+   other still has room. **A refusal bounds the model, not the machine.** 5.8 GB of
+   spread on one box. The `+` went back on. The honest arc for a post is not "I built a
+   probe" but *"I built a probe, believed it, and was wrong by 5.8 GB until I ran it
+   twice"* — and the thing that saved it was re-measuring rather than reasoning.
 
 9. **Probing someone else's GPU is a trust exercise, so it has rules.** The scan touches
    **idle hosts only** — anything resident and the host is skipped *loudly*, naming what
@@ -124,10 +132,11 @@ too (see "Do not overclaim").
 - The 16k finding is **version dependent**: 0.32.5 truncates an overflowing prompt to
   `num_ctx/2`, 0.30.6 fills the window normally. A newer Ollama is something to
   re-measure, not something to assume.
-- Even a bracketed ceiling is the **usable** figure, which is still below the hardware
-  total `nvidia-smi` reports — drivers, the desktop session and per-card fragmentation
-  on a multi-GPU box all take their cut. Do not write "detects your VRAM". A scan that
-  never provokes a refusal stays an open lower bound and keeps its `+`.
+- Every scanned ceiling is a **lower bound on the usable figure**, which is itself below
+  the hardware total `nvidia-smi` reports — drivers, the desktop session and per-card
+  fragmentation all take their cut. Do not write "detects your VRAM", and specifically
+  do not write that an out-of-memory refusal establishes the capacity: it bounds the
+  model that was refused. See 8c.
 - GPU temperature, utilisation, fan and power are **not** shown, and that is a
   deliberate limit: they live in `nvidia-smi`, reaching them needs SSH to every host,
   and needing no credentials is exactly what makes this safe to point at a colleague's

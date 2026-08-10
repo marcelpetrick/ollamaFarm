@@ -72,7 +72,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.33"
+VERSION="0.0.34"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -102,10 +102,15 @@ SHOW_HELP=0
 # Measured usable VRAM ceilings (see README.md). Used only to draw bars.
 # Absent host => "?" and no bar; nothing here is inferred.
 #
-# 0.0.32: both figures re-measured with forced full offload (num_gpu 999), which is
-# the only way to reach the actual edge of the card -- see probe_load(). The previous
-# 12.2 / 36.1 came from letting Ollama choose the layer split, and on the dual-GPU box
-# that under-reported by 11%: it takes 40.4 GB, not 36.1.
+# 0.0.32: both figures re-established with the layer count pinned (num_gpu 999), which
+# reaches far closer to the edge of the card than letting Ollama choose the split -- see
+# probe_load(). The .67 entry rose from 36.1 to 40.4 because 40.47 GB was demonstrated
+# fully resident there; the old figure was where Ollama's own caution stopped, not where
+# the hardware did.
+#
+# These are still the largest footprints anyone has DEMONSTRATED, not hardware totals,
+# and on a multi-GPU box the reachable figure varies by model (see ceiling_for). Use the
+# best demonstrated value: it is the only one that draws real headroom on the bar.
 declare -A VRAM_TOTAL=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ollamafarm"
@@ -328,19 +333,26 @@ bar() {  # bar <used> <total> <width>
 }
 
 # ------------------------------------------------------ VRAM ceilings ---------
-# Four sources, in descending order of trust:
-#   exact    - the VRAM_TOTAL table, or a user override; a figure someone stands behind
-#   measured - the "s" scan pushed the GPU until it refused: the ceiling is BRACKETED
-#              between the largest load that fit and the smallest that would not
-#   probed   - the same scan, but it ran out of context to ask for before the card ever
-#              refused, so only the lower end of the bracket is known
-#   learned  - observed passively: the largest fully-resident total ever seen
+# Three sources, in descending order of trust:
+#   exact   - the VRAM_TOTAL table, or a user override; a figure someone stands behind
+#   probed  - found by the "s" scan: the largest footprint that stayed fully resident
+#   learned - observed passively: the largest fully-resident total ever seen
 #
-# probed and learned are OPEN lower bounds -- the true ceiling could be anywhere above
-# them -- and are shown with a "+". measured has a known upper edge a few percent away,
-# so it drops the "+" and is drawn as the figure it is.
+# probed and learned are both LOWER BOUNDS, never totals, and are shown with a "+".
 #
-# That distinction is load-bearing: a bar that silently means either "this is the
+# An out-of-memory refusal during a scan does NOT lift a figure out of that category,
+# which is the one thing this comment exists to say. It is tempting -- the card said no,
+# so surely that is the ceiling -- but a refusal bounds THE MODEL BEING LOADED, not the
+# machine. Measured here on the dual-GPU host, both idle, minutes apart:
+#
+#   qwen3.6:27b-q8_0            -> 40.47 GB resident before it refused
+#   qwen3.6:27b-mtp-q8_0-ctx60k -> 34.69 GB resident before it refused
+#
+# Same box, same day, 5.8 GB apart. A model's layers divide unevenly across two cards,
+# so one fills while the other still has room, and where that wall sits is a property of
+# the model. Every scanned figure therefore keeps its "+".
+#
+# The distinction is load-bearing: a bar that silently means either "this is the
 # capacity" or "it is at least this" would be worse than drawing no bar at all.
 # See docs/vram-discovery.md for why a split event cannot be used as a measurement.
 declare -A VRAM_LEARNED=()
@@ -352,7 +364,7 @@ load_vram_cache() {
   while IFS=$'\t' read -r h g src ts; do
     [ -n "$h" ] || continue
     [[ "$g" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
-    case "$src" in measured|probed|learned) ;; *) continue ;; esac
+    case "$src" in probed|learned) ;; *) continue ;; esac
     VRAM_LEARNED[$h]="$g"; VRAM_SOURCE[$h]="$src"
   done < "$CACHE_VRAM"
 }
@@ -375,33 +387,26 @@ note_resident_total() {  # note_resident_total <host> <gb> <any_split:0|1>
   local host="$1" gb="$2" split="$3"
   [ "$split" = "0" ] || return 0
   fgt "$gb" 0 || return 0
-  # never downgrade a scanned figure with a smaller passive observation
-  case "${VRAM_SOURCE[$host]:-}" in
-    measured|probed) fgt "$gb" "${VRAM_LEARNED[$host]:-0}" || return 0 ;;
-  esac
+  # never downgrade a probed figure with a smaller passive observation
+  if [ "${VRAM_SOURCE[$host]:-}" = "probed" ] && ! fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
+    return 0
+  fi
   if fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
     VRAM_LEARNED[$host]="$gb"
-    # A passive observation that beats a measured bracket has outgrown it: the card is
-    # holding more than the scan could get it to, so the upper edge no longer applies
-    # and the figure goes back to being an open lower bound.
-    VRAM_SOURCE[$host]="learned"
+    # A passive observation that beats the scan is entirely expected: the scan reaches
+    # only as far as ONE model could take it, and real traffic may run a model that
+    # divides across the cards better. Both are lower bounds, so the larger simply wins.
+    [ "${VRAM_SOURCE[$host]:-}" = "probed" ] || VRAM_SOURCE[$host]="learned"
     save_vram_cache
     event "$C_DIM" "$host: ceiling at least $(printf '%.1f' "$gb") GB (observed fully resident)"
   fi
 }
 
-# Echoes "<gb> exact" | "<gb> measured" | "<gb> lower" | "" (unknown)
+# Echoes "<gb> exact" | "<gb> lower" | "" (unknown)
 ceiling_for() {
   local host="$1"
   if [ -n "${VRAM_TOTAL[$host]:-}" ]; then printf '%s exact' "${VRAM_TOTAL[$host]}"; return; fi
-  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then
-    if [ "${VRAM_SOURCE[$host]:-}" = "measured" ]; then
-      printf '%s measured' "${VRAM_LEARNED[$host]}"
-    else
-      printf '%s lower' "${VRAM_LEARNED[$host]}"
-    fi
-    return
-  fi
+  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then printf '%s lower' "${VRAM_LEARNED[$host]}"; return; fi
   printf ''
 }
 
@@ -821,13 +826,14 @@ probe_host() {
   done
 
   if fgt "$best" 0; then
-    # "measured" only when the search actually hit a refusal: then the true ceiling is
-    # known to sit between $best and the smallest OOM, and the "+" can honestly come
-    # off. Without a refusal the search merely ran out of context to ask for, and the
-    # figure stays an open lower bound.
-    local src=probed
-    [ "$capped" = "1" ] && src=measured
-    plog "RESULT $host $(printf '%.2f' "$best") $src"
+    # $capped records that the card refused something larger, which is worth saying in
+    # the log -- it means the search ended at a wall rather than running out of context
+    # to ask for. It does NOT promote the figure: the wall belongs to this model, not to
+    # the machine. See the note above ceiling_for().
+    local why="stopped at the model's context limit"
+    [ "$capped" = "1" ] && why="the GPU refused more of this model"
+    plog "RESULT $host $(printf '%.2f' "$best") probed"
+    plog "  ($why)"
     # Persist from the worker as well, so a standalone --probe-worker run is not lost
     # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
     # different host survives.
@@ -845,6 +851,24 @@ probe_worker() {
   # run the TUI, every single plog line failed with "No such file or directory" while
   # the scan itself worked. Create it here, where both entry points pass through.
   mkdir -p "$CFG_DIR" 2>/dev/null
+
+  # --probe-vram enters this function directly and so never took the lock that
+  # start_probe takes for the detached path. That left two holes: pressing "s" in a
+  # running TUI would happily put a SECOND scan on the same host, and this run would
+  # then delete a lock it had never owned, freeing the way for a third. Both matter
+  # more now that a scan deliberately pushes the GPU to an out-of-memory refusal --
+  # two of them racing between the idle check and the load is exactly what the lock is
+  # for. The detached path is not re-checked here: start_probe already did, and its
+  # lock names this very process.
+  if [ "$PROBE_CLI" = "1" ]; then
+    if probe_running; then
+      printf 'a ceiling scan is already running (pid %s)\n' \
+        "$(cat "$PROBE_LOCK" 2>/dev/null)" >&2
+      return 1
+    fi
+    echo $$ > "$PROBE_LOCK" 2>/dev/null
+  fi
+
   : > "$PROBE_LOG"
   plog "scan started $(date '+%H:%M:%S')"
   local h
@@ -891,7 +915,7 @@ maybe_auto_scan() {
   for h in $HOSTS; do
     [ -n "${AUTO_TRIED[$h]:-}" ] && continue
     [ -n "${VRAM_TOTAL[$h]:-}" ] && continue                  # exact figure, trusted
-    case "${VRAM_SOURCE[$h]:-}" in measured|probed) continue ;; esac  # already scanned
+    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && continue          # already scanned
     [ -n "${PREV_MODELS[$h]:-}" ] && continue                 # busy: never evict
     [ -z "${HOST_SEEN[$h]:-}" ] && continue                   # not reached yet
     cand+="$h "
@@ -921,14 +945,8 @@ drain_probe_log() {
     [ -z "$line" ] && continue
     case "$line" in
       RESULT*) set -- $line
-               # RESULT <host> <gb> <source>; older workers omitted the source field.
-               case "${4:-}" in measured|probed) ;; *) set -- "$1" "$2" "$3" probed ;; esac
-               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]="$4"; save_vram_cache
-               if [ "$4" = "measured" ]; then
-                 event "$C_GRN" "$2: ceiling $3 GB (measured — the GPU refused anything larger)"
-               else
-                 event "$C_GRN" "$2: ceiling at least $3 GB (probed)"
-               fi ;;
+               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]=probed; save_vram_cache
+               event "$C_GRN" "$2: ceiling at least $3 GB (probed)" ;;
       SKIP*)   event "$C_YEL" "${line#SKIP }" ;;
       *)       event "$C_DIM" "$line" ;;
     esac
@@ -941,11 +959,14 @@ if [ "$PROBE_WORKER" = "1" ]; then probe_worker; exit 0; fi
 
 # --probe-vram: same scan, in the foreground, so it is usable from a script or a
 # terminal without the TUI. Exits non-zero when no ceiling could be established --
-# every host busy, or no model would fit -- so a caller can tell.
+# every host busy, no model would fit, or another scan already holds the lock -- so a
+# caller can tell. The refusal has to short-circuit: falling through to the loop below
+# would inspect ceilings that load_vram_cache had read from a PREVIOUS run and report
+# success for a scan that never happened.
 if [ "$PROBE_CLI" = "1" ]; then
-  probe_worker
+  probe_worker || exit 1
   for h in $HOSTS; do
-    case "${VRAM_SOURCE[$h]:-}" in measured|probed) exit 0 ;; esac
+    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && exit 0
   done
   echo "no ceiling established (hosts busy, or no model fits)" >&2
   exit 1

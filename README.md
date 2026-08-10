@@ -36,9 +36,9 @@ version in the header rule.</sub>
   and each resident model with its size, quantisation, context and keep-alive countdown.
 - **Measures usable VRAM**, which the API does not expose at all: it learns a floor from
   what it observes, and can scan an idle host by loading a model with every layer pinned
-  to the GPU and raising the context until the card refuses — which brackets the ceiling
-  from both sides instead of guessing. Automatic for unknown idle hosts, or on demand
-  with `s` / `--probe-vram`.
+  to the GPU and raising the context until the card refuses — which reaches far closer
+  to the real edge than watching for the model to spill. Automatic for unknown idle
+  hosts, or on demand with `s` / `--probe-vram`.
 - **A live event log** — models loading, expiring, being displaced, hosts dropping off
   the network. State changes you would otherwise have to catch in the act.
 - **Three colour themes**, switchable while running: `dark` for any terminal, `vivid`
@@ -59,7 +59,7 @@ version in the header rule.</sub>
 Real output, two servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.33 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.34 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.3 GB    6ms
@@ -82,7 +82,7 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.33 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.34 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -230,19 +230,16 @@ you throughput right now** — in every theme.
 ## VRAM ceilings
 
 A bar needs a denominator, and the Ollama API does not expose one — there is no
-total-VRAM field on any endpoint. Four sources are used instead:
+total-VRAM field on any endpoint. Three sources are used instead:
 
 | shown as | source | meaning |
 |---|---|---|
 | `33.1/40.4 GB` | the `VRAM_TOTAL` table | a figure someone measured and stands behind |
-| `33.1/40.4 GB` | **measured** | the scan found the edge: the ceiling is bracketed |
-| `0.0/7.77+ GB` | **probed** or **learned** | *at least* this much fits — an open lower bound |
+| `0.0/7.77+ GB` | **probed** or **learned** | *at least* this much fits — a lower bound |
 | `0.0 GB/?` | nothing known | no bar drawn, rather than a guessed one |
 
 The **`+` is load-bearing.** A bar that silently meant either "this is the capacity" or
-"it is at least this much" would be worse than no bar. It comes off only when the scan
-has an *upper* bound as well — when the GPU has refused something larger — and the true
-figure is therefore known to within a few percent.
+"it is at least this much" would be worse than no bar.
 
 **Learned** costs nothing: `/api/ps` is already polled every frame, so the largest total
 ever seen *fully resident* is recorded. **Scanning** gets a far tighter figure, and is
@@ -272,20 +269,30 @@ short of what the card actually holds. Watching for the split therefore measures
 **Ollama's caution, not the GPU** — on the dual-GPU box here it stopped at 36.1 GB.
 
 Pinning the layer count takes the estimate out of the loop and lets the CUDA allocator
-answer directly:
-
-| outcome | what it proves |
-|---|---|
-| load succeeds | that many bytes genuinely fit — a lower bound, and a tight one |
-| load is refused (`cudaMalloc failed: out of memory`) | they genuinely do not — an **upper** bound |
-
-The second row is new, and it is the whole point: with a lid on the search the result
-is a bracket, not an open-ended minimum. Re-measured that way, the same box takes
-**40.4 GB** — 11% more than the old method could ever report, and 4.3 GB of headroom
-that was being drawn as full.
+answer directly: a load that succeeds proves those bytes fit, and a load refused with
+`cudaMalloc failed: out of memory` proves that configuration does not. The search runs
+between the two. Re-measured that way the same box reaches **40.4 GB** — 11% more than
+the old method could ever report, and 4.3 GB of headroom that was being drawn as full.
 
 A refused load is contained in the `llama-server` subprocess; the Ollama daemon itself
 is unaffected and keeps serving.
+
+### Why the result still carries a `+`
+
+A refusal is tempting to read as *the* ceiling — the card said no, after all. It is not,
+and this cost us a wrong label before it was caught. **A refusal bounds the model being
+loaded, not the machine.** Measured on the dual-GPU host, both runs idle, minutes apart:
+
+| model | largest fully-resident footprint |
+|---|---|
+| `qwen3.6:27b-q8_0` | **40.47 GB** |
+| `qwen3.6:27b-mtp-q8_0-ctx60k` | **34.69 GB** |
+
+Same box, same day, 5.8 GB apart. A model's layers divide unevenly across two cards, so
+one fills while the other still has room, and where that wall sits is a property of the
+model rather than of the hardware. The scan reports whichever model it happened to pick,
+which is why every scanned figure stays a lower bound and keeps its `+` — and why a
+*larger* passive observation is allowed to replace it without argument.
 
 ### Safety
 
@@ -314,7 +321,8 @@ probe 192.168.100.37: qwen3:8b-q8_0 (max ctx 40960)
   ctx 31232: OUT OF MEMORY — the ceiling is below this
   ctx 26368: resident 12.20 GB
   ctx 28800: OUT OF MEMORY — the ceiling is below this
-RESULT 192.168.100.37 12.20 measured
+RESULT 192.168.100.37 12.20 probed
+  (the GPU refused more of this model)
 scan finished 12:17:57
 ```
 
@@ -323,21 +331,18 @@ be placed on a 12 GB card, so the scan kept stepping down until one fitted. That
 reach problem — it wants the biggest model that still fits, and finds it by trying, and
 a rejection is cheap because the allocator refuses before any weights move.
 
-Then the **bracket**: 26368 fitted at 12.20 GB and 28800 did not, so the ceiling is
-pinned between them. That is why the last field reads `measured` rather than `probed`,
-and why the bar for this host carries no `+`.
+Then the **search**: 26368 fitted at 12.20 GB and 28800 did not, so the scan stopped
+there. The parenthesised line says *why* it stopped — at a refusal from the card, rather
+than at the end of the model's context range — which is useful to know and, per the
+section above, still not a statement about the machine.
 
 **The result is used, not just printed.** It is written to
-`$XDG_CONFIG_HOME/ollamafarm/vram` as `source=measured`, and every later run draws its
-bar against it:
+`$XDG_CONFIG_HOME/ollamafarm/vram` as `source=probed`, and every later run draws its bar
+against it:
 
 ```
-192.168.100.37   ollama 0.30.6  ░░░░░░░░░░░░░░░░░░░░░░   0.0/12.20 GB    7ms
+192.168.100.37   ollama 0.30.6  ░░░░░░░░░░░░░░░░░░░░░░   0.0/12.20+ GB    7ms
 ```
-
-Had the search run out of context to ask for without ever provoking a refusal, it would
-have stored `source=probed` and drawn `0.0/12.20+ GB` instead — same figure, weaker
-claim.
 
 | exit code | meaning |
 |---|---|
@@ -350,13 +355,15 @@ claim.
 ```
 
 A scanned value is never overwritten by a smaller passive observation. A *larger* one
-does replace it, and drops the host back to `learned`: an observation that beat the
-bracket has outgrown it, so the upper edge no longer holds.
+does replace it, and that is expected rather than alarming: the scan reached only as far
+as one model could take it, and real traffic may run a model that divides across the
+cards better. Both are lower bounds, so the larger simply wins.
 
 </details>
 
-Full investigation of what the API can and cannot tell you:
-[docs/vram-discovery.md](docs/vram-discovery.md).
+Full investigation of what the API can and cannot tell you, including the wrong turns:
+[docs/vram-discovery.md](docs/vram-discovery.md). How the pieces fit together, in C4
+diagrams: [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -478,7 +485,7 @@ bitten by: [docs/agents.md](docs/agents.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.33 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.34 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
