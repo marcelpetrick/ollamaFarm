@@ -180,18 +180,22 @@ stage_docs() {
     return 1
   fi
   local secs=("## What it watches" "## At runtime" "## Keys" "## Command line"
-              "## Host discovery" "## Configuration" "## License")
+              "## Host discovery" "## Configuration")
   local s
   for s in "${secs[@]}"; do
     grep -qF "$s" "$README" || missing+="'$s' "
   done
+  # The licence belongs in the prominent project metadata; a duplicate closing
+  # section adds no information. Still require both the grant and a repository link.
+  grep -qF "License: GPLv3 or later" "$README" || missing+="README-licence-declaration "
+  grep -qF "](LICENSE)" "$README" || missing+="README-licence-link "
   grep -q "Version 3, 29 June 2007" "$LICENSE" || missing+="GPLv3-text "
   grep -q "GNU General Public License" "$SCRIPT" || missing+="licence-header-in-script "
   if [ -n "$missing" ]; then
     mark_result "5 Documentation" FAIL "absent: ${missing% }"
     return 1
   fi
-  mark_result "5 Documentation" PASS "README sections, LICENSE and script header present"
+  mark_result "5 Documentation" PASS "README sections, licence declaration and files present"
   return 0
 }
 

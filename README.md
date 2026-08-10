@@ -16,15 +16,16 @@ terminal.
 <sub>Click the preview for the full-quality recording
 ([`media/showcase.webm`](media/showcase.webm), VP9, 38 s).</sub>
 
-![ollamaFarm watching three Ollama hosts](media/currentState.png)
+![ollamaFarm watching two Ollama hosts](media/currentState.png)
 
-<sub>Three hosts, one of them found by discovery (`.54`, no known VRAM ceiling, so `?`);
-`.37` flagged for `presence_penalty`. Captured from v0.0.12 — later versions show the
-version in the header rule.</sub>
+<sub>Two hosts after discovery; `.37` is flagged for `presence_penalty`. Captured from
+v0.0.36.</sub>
 
-**Author:** Marcel Petrick &lt;mail@marcelpetrick.it&gt;
-**License:** GPLv3 or later — see [LICENSE](LICENSE).
-**Note:** this project was generated with AI assistance.
+**Author: Marcel Petrick <mail@marcelpetrick.it>**
+
+**License: GPLv3 or later. See `LICENSE`.**
+
+**Note: project is generated with AI.**
 
 ---
 
@@ -59,7 +60,7 @@ version in the header rule.</sub>
 Real output, two servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.36 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.37 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.3 GB    6ms
@@ -82,7 +83,7 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.36 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.37 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -491,7 +492,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.36 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.37 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.
@@ -499,9 +500,3 @@ The workflow derives `vN.N.N` from `VERSION` rather than accepting a second vers
 input, so the script remains the single source of truth.
 
 While the major version is `0` the interface is not stable.
-
----
-
-## License
-
-GPLv3. See [LICENSE](LICENSE).
