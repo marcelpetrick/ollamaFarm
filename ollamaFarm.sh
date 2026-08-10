@@ -60,17 +60,19 @@
 # them, and reaching nvidia-smi on the hosts would need SSH access this tool does not
 # assume it has. Everything shown is real API data.
 #
-# On discovery: hosts are found by probing /api/version across the /24. Usable
-# VRAM is deliberately NOT probed — establishing it means pushing num_ctx until
-# the model spills, which loads models and disturbs a shared server. Known
-# ceilings are listed in VRAM_TOTAL below; discovered hosts show "?" and get no
-# bar rather than a guessed one.
+# On discovery: hosts are found by probing /api/version across the /24, which only
+# reads. Usable VRAM is a separate, deliberately opt-in matter: the API has no
+# total-VRAM field anywhere, so the figure has to be established by loading a model
+# with every layer pinned to the GPU and raising num_ctx until the card refuses. That
+# writes to the server, so it runs against IDLE hosts only and never evicts anything.
+# Known ceilings are listed in VRAM_TOTAL below; a host with neither a table entry nor
+# a scan shows "?" and gets no bar rather than a guessed one.
 
 set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.31"
+VERSION="0.0.32"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -99,7 +101,12 @@ SHOW_HELP=0
 
 # Measured usable VRAM ceilings (see README.md). Used only to draw bars.
 # Absent host => "?" and no bar; nothing here is inferred.
-declare -A VRAM_TOTAL=( [192.168.100.37]=12.2 [192.168.100.67]=36.1 )
+#
+# 0.0.32: both figures re-measured with forced full offload (num_gpu 999), which is
+# the only way to reach the actual edge of the card -- see probe_load(). The previous
+# 12.2 / 36.1 came from letting Ollama choose the layer split, and on the dual-GPU box
+# that under-reported by 11%: it takes 40.4 GB, not 36.1.
+declare -A VRAM_TOTAL=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ollamafarm"
 CFG="$CFG_DIR/config"
@@ -321,13 +328,19 @@ bar() {  # bar <used> <total> <width>
 }
 
 # ------------------------------------------------------ VRAM ceilings ---------
-# Three sources, in descending order of trust:
-#   exact   - the VRAM_TOTAL table, or a user override; a figure someone stands behind
-#   probed  - found by the "s" scan: the largest footprint that stayed fully resident
-#   learned - observed passively: the largest fully-resident total ever seen
+# Four sources, in descending order of trust:
+#   exact    - the VRAM_TOTAL table, or a user override; a figure someone stands behind
+#   measured - the "s" scan pushed the GPU until it refused: the ceiling is BRACKETED
+#              between the largest load that fit and the smallest that would not
+#   probed   - the same scan, but it ran out of context to ask for before the card ever
+#              refused, so only the lower end of the bracket is known
+#   learned  - observed passively: the largest fully-resident total ever seen
 #
-# probed and learned are both LOWER BOUNDS, never totals, and are shown with a "+".
-# The distinction is load-bearing: a bar that silently means either "this is the
+# probed and learned are OPEN lower bounds -- the true ceiling could be anywhere above
+# them -- and are shown with a "+". measured has a known upper edge a few percent away,
+# so it drops the "+" and is drawn as the figure it is.
+#
+# That distinction is load-bearing: a bar that silently means either "this is the
 # capacity" or "it is at least this" would be worse than drawing no bar at all.
 # See docs/vram-discovery.md for why a split event cannot be used as a measurement.
 declare -A VRAM_LEARNED=()
@@ -339,7 +352,7 @@ load_vram_cache() {
   while IFS=$'\t' read -r h g src ts; do
     [ -n "$h" ] || continue
     [[ "$g" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
-    case "$src" in probed|learned) ;; *) continue ;; esac
+    case "$src" in measured|probed|learned) ;; *) continue ;; esac
     VRAM_LEARNED[$h]="$g"; VRAM_SOURCE[$h]="$src"
   done < "$CACHE_VRAM"
 }
@@ -362,23 +375,33 @@ note_resident_total() {  # note_resident_total <host> <gb> <any_split:0|1>
   local host="$1" gb="$2" split="$3"
   [ "$split" = "0" ] || return 0
   fgt "$gb" 0 || return 0
-  # never downgrade a probed figure with a smaller passive observation
-  if [ "${VRAM_SOURCE[$host]:-}" = "probed" ] && ! fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
-    return 0
-  fi
+  # never downgrade a scanned figure with a smaller passive observation
+  case "${VRAM_SOURCE[$host]:-}" in
+    measured|probed) fgt "$gb" "${VRAM_LEARNED[$host]:-0}" || return 0 ;;
+  esac
   if fgt "$gb" "${VRAM_LEARNED[$host]:-0}"; then
     VRAM_LEARNED[$host]="$gb"
-    [ "${VRAM_SOURCE[$host]:-}" = "probed" ] || VRAM_SOURCE[$host]="learned"
+    # A passive observation that beats a measured bracket has outgrown it: the card is
+    # holding more than the scan could get it to, so the upper edge no longer applies
+    # and the figure goes back to being an open lower bound.
+    VRAM_SOURCE[$host]="learned"
     save_vram_cache
     event "$C_DIM" "$host: ceiling at least $(printf '%.1f' "$gb") GB (observed fully resident)"
   fi
 }
 
-# Echoes "<gb> exact" | "<gb> lower" | "" (unknown)
+# Echoes "<gb> exact" | "<gb> measured" | "<gb> lower" | "" (unknown)
 ceiling_for() {
   local host="$1"
   if [ -n "${VRAM_TOTAL[$host]:-}" ]; then printf '%s exact' "${VRAM_TOTAL[$host]}"; return; fi
-  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then printf '%s lower' "${VRAM_LEARNED[$host]}"; return; fi
+  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then
+    if [ "${VRAM_SOURCE[$host]:-}" = "measured" ]; then
+      printf '%s measured' "${VRAM_LEARNED[$host]}"
+    else
+      printf '%s lower' "${VRAM_LEARNED[$host]}"
+    fi
+    return
+  fi
   printf ''
 }
 
@@ -655,8 +678,10 @@ help_overlay() {
 
 # --------------------------------------------------------------- VRAM probe ----
 # Finds the largest footprint that stays FULLY RESIDENT on a host, by loading a model
-# at escalating num_ctx. That figure is still a lower bound on capacity, but a much
-# tighter one than passive observation usually reaches.
+# with every layer pinned to the GPU and binary-searching num_ctx until the card
+# refuses the allocation. The refusal is the point: it puts a lid on the search, so the
+# result is a bracket a few percent wide rather than the open-ended "at least this
+# much" that passive observation and the old auto-offload scan could ever produce.
 #
 # Three rules make this safe to bind to a key on somebody else's server:
 #   1. an idle host only. If anything is resident the host is skipped, loudly. Evicting
@@ -671,17 +696,51 @@ plog() {
   return 0
 }
 
-# Load a model at a given num_ctx, then report "<size_vram_gb> <split:0|1>".
+# Load a model at a given num_ctx with EVERY layer forced onto the GPU, then report
+# "<size_vram_gb> <verdict>" where verdict is one of ok | oom | split.
+#
+# "num_gpu: 999" is the whole point of this function, and the reason the figures it
+# produces are so much tighter than the ones the first version of the scan produced.
+#
+# Left to itself, Ollama picks the layer count from its own pre-flight estimate, and
+# that estimate is deliberately conservative: it keeps a reserve, it can only move
+# whole layers, and it would rather split to system RAM than risk an allocation
+# failure. So the largest footprint Ollama will VOLUNTARILY place is well below what
+# the card actually holds -- which is exactly why the auto-offload scan reported
+# 36.1 GB for a box that in fact takes 38.8 GB.
+#
+# Pinning the layer count removes the estimate from the loop and makes the CUDA
+# allocator answer the question directly:
+#
+#   the load succeeds -> that many bytes genuinely fit. A lower bound, but a tight one.
+#   the load OOMs     -> they genuinely do not. This is an UPPER bound, and it is the
+#                        first upper bound this tool has ever been able to obtain.
+#
+# Having both ends is what turns "at least this much" into a measurement. See
+# docs/vram-discovery.md; the failed load is contained in the llama-server subprocess
+# and never takes the Ollama daemon itself down.
 probe_load() {  # probe_load <host> <model> <ctx>
-  local host="$1" model="$2" ctx="$3" base="http://$1:$PORT" r
-  curl -s --max-time 900 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
+  local host="$1" model="$2" ctx="$3" base="http://$1:$PORT" resp err r
+  resp=$(curl -s --max-time 900 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$model" --argjson c "$ctx" \
-          '{model:$m,keep_alive:"60s",options:{num_ctx:$c}}')" >/dev/null 2>&1
+          '{model:$m,keep_alive:"60s",options:{num_gpu:999,num_ctx:$c}}')" 2>/dev/null)
+  err=$(printf '%s' "$resp" | jq -r '.error // ""' 2>/dev/null)
+
+  # An out-of-memory refusal is a RESULT, not a failure: it is the upper bound. Any
+  # other error (missing model, host gone) is not, and must not be read as one.
+  if [ -n "$err" ]; then
+    case "$err" in
+      *"out of memory"*|*"cudaMalloc"*|*"unable to allocate"*|*"failed to allocate"*)
+        printf '0 oom'; return ;;
+      *) printf '0 err'; return ;;
+    esac
+  fi
+
   r=$(curl -s --max-time 10 "$base/api/ps" 2>/dev/null \
-      | jq -r '.models[0] | "\(.size_vram/1e9) \(if .size_vram < .size - 5e7 then 1 else 0 end)"' 2>/dev/null)
+      | jq -r '.models[0] | "\(.size_vram/1e9) \(if .size_vram < .size - 5e7 then "split" else "ok" end)"' 2>/dev/null)
   curl -s --max-time 60 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$model" '{model:$m,keep_alive:0}')" >/dev/null 2>&1
-  [ -n "$r" ] && printf '%s' "$r" || printf '0 1'
+  [ -n "$r" ] && printf '%s' "$r" || printf '0 err'
 }
 
 probe_host() {
@@ -702,10 +761,22 @@ probe_host() {
            | jq -r '.models[]? | "\(.size)\t\(.name)"' 2>/dev/null | sort -rn | cut -f2)
   [ -n "$models" ] || { plog "SKIP $host — no models on the server"; return 0; }
 
-  local best=0 tried=0 model
+  # best  = largest footprint seen FULLY RESIDENT      -> lower bound on the ceiling
+  # capped = 1 once a load has been refused for OOM    -> the ceiling is bracketed
+  #
+  # Two separate budgets, because the two failures cost wildly different amounts of
+  # time. A model whose weights alone overflow the card is rejected by the allocator in
+  # a few seconds and tells us only "too big, next one" -- on a 12 GB box holding
+  # several 17-30 GB models that happens repeatedly before anything fits, so charging
+  # those to the same small budget as a real attempt made the scan give up before it
+  # reached a model it could load. Rejections are therefore counted separately and
+  # allowed to run further; the search still stops at the first model that does load.
+  local best=0 capped=0 rejected=0 model
   for model in $models; do
-    [ "$tried" -ge 3 ] && break
-    tried=$((tried + 1))
+    # 12, not a smaller number: the .37 box needed 7 rejections before reaching a model
+    # it could hold, and a rejection costs only ~8 s because the allocator refuses long
+    # before any weights are transferred.
+    [ "$rejected" -ge 12 ] && break
 
     local maxctx
     maxctx=$(curl -s --max-time 10 -X POST "$base/api/show" -H 'Content-Type: application/json' \
@@ -714,38 +785,53 @@ probe_host() {
     [[ "$maxctx" =~ ^[0-9]+$ ]] || maxctx=262144
 
     plog "probe $host: $model (max ctx $maxctx)"
-    local lo=2048 hi="$maxctx" res vram split
-    res=$(probe_load "$host" "$model" "$lo"); vram="${res%% *}"; split="${res##* }"
-    if [ "$split" = "1" ]; then
-      plog "  $model splits even at ctx $lo — too large, trying a smaller model"
-      continue
-    fi
+    local lo=2048 hi="$maxctx" res vram verdict
+    res=$(probe_load "$host" "$model" "$lo"); vram="${res%% *}"; verdict="${res##* }"
+    case "$verdict" in
+      oom)   plog "  $model will not fit even at ctx $lo — trying a smaller model"
+             capped=1; rejected=$((rejected + 1)); continue ;;
+      split) plog "  $model splits even at ctx $lo — trying a smaller model"
+             rejected=$((rejected + 1)); continue ;;
+      err)   plog "  $model could not be loaded — trying a smaller model"
+             rejected=$((rejected + 1)); continue ;;
+    esac
     fgt "$vram" "$best" && best="$vram"
     plog "  ctx $lo: resident $(printf '%.2f' "$vram") GB"
 
-    # Binary search the largest fully-resident num_ctx. Bounded at 7 loads.
+    # Binary search the largest num_ctx that still fits entirely on the GPU. Bounded
+    # at 7 loads. Every "oom" narrows the bracket from ABOVE -- that upper edge is
+    # what makes the final figure a measurement rather than an open-ended minimum.
     local i=0
     while [ "$i" -lt 7 ] && [ $(( hi - lo )) -gt 4096 ]; do
       i=$((i + 1))
       local mid=$(( (lo + hi) / 2 ))
-      res=$(probe_load "$host" "$model" "$mid"); vram="${res%% *}"; split="${res##* }"
-      if [ "$split" = "0" ]; then
-        lo="$mid"; fgt "$vram" "$best" && best="$vram"
-        plog "  ctx $mid: resident $(printf '%.2f' "$vram") GB"
-      else
-        hi="$mid"
-        plog "  ctx $mid: SPLIT — ceiling is below this"
-      fi
+      res=$(probe_load "$host" "$model" "$mid"); vram="${res%% *}"; verdict="${res##* }"
+      case "$verdict" in
+        ok)    lo="$mid"; fgt "$vram" "$best" && best="$vram"
+               plog "  ctx $mid: resident $(printf '%.2f' "$vram") GB" ;;
+        oom)   hi="$mid"; capped=1
+               plog "  ctx $mid: OUT OF MEMORY — the ceiling is below this" ;;
+        split) hi="$mid"
+               plog "  ctx $mid: SPLIT — the ceiling is below this" ;;
+        *)     hi="$mid"
+               plog "  ctx $mid: load failed — treating as above the ceiling" ;;
+      esac
     done
     break
   done
 
   if fgt "$best" 0; then
-    plog "RESULT $host $(printf '%.2f' "$best")"
+    # "measured" only when the search actually hit a refusal: then the true ceiling is
+    # known to sit between $best and the smallest OOM, and the "+" can honestly come
+    # off. Without a refusal the search merely ran out of context to ask for, and the
+    # figure stays an open lower bound.
+    local src=probed
+    [ "$capped" = "1" ] && src=measured
+    plog "RESULT $host $(printf '%.2f' "$best") $src"
     # Persist from the worker as well, so a standalone --probe-worker run is not lost
     # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
     # different host survives.
-    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]=probed
+    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]="$src"
     save_vram_cache
   else
     plog "SKIP $host — could not place any model fully in VRAM"
@@ -754,6 +840,11 @@ probe_host() {
 
 probe_worker() {
   load_vram_cache
+  # The detached path gets its directory from start_probe, but --probe-vram calls this
+  # function straight from main and used to inherit nothing: on a machine that had never
+  # run the TUI, every single plog line failed with "No such file or directory" while
+  # the scan itself worked. Create it here, where both entry points pass through.
+  mkdir -p "$CFG_DIR" 2>/dev/null
   : > "$PROBE_LOG"
   plog "scan started $(date '+%H:%M:%S')"
   local h
@@ -799,8 +890,8 @@ maybe_auto_scan() {
   local h cand=""
   for h in $HOSTS; do
     [ -n "${AUTO_TRIED[$h]:-}" ] && continue
-    [ -n "${VRAM_TOTAL[$h]:-}" ] && continue                 # exact figure, trusted
-    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && continue         # already probed
+    [ -n "${VRAM_TOTAL[$h]:-}" ] && continue                  # exact figure, trusted
+    case "${VRAM_SOURCE[$h]:-}" in measured|probed) continue ;; esac  # already scanned
     [ -n "${PREV_MODELS[$h]:-}" ] && continue                 # busy: never evict
     [ -z "${HOST_SEEN[$h]:-}" ] && continue                   # not reached yet
     cand+="$h "
@@ -830,8 +921,14 @@ drain_probe_log() {
     [ -z "$line" ] && continue
     case "$line" in
       RESULT*) set -- $line
-               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]=probed; save_vram_cache
-               event "$C_GRN" "$2: ceiling at least $3 GB (probed)" ;;
+               # RESULT <host> <gb> <source>; older workers omitted the source field.
+               case "${4:-}" in measured|probed) ;; *) set -- "$1" "$2" "$3" probed ;; esac
+               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]="$4"; save_vram_cache
+               if [ "$4" = "measured" ]; then
+                 event "$C_GRN" "$2: ceiling $3 GB (measured — the GPU refused anything larger)"
+               else
+                 event "$C_GRN" "$2: ceiling at least $3 GB (probed)"
+               fi ;;
       SKIP*)   event "$C_YEL" "${line#SKIP }" ;;
       *)       event "$C_DIM" "$line" ;;
     esac
@@ -848,7 +945,7 @@ if [ "$PROBE_WORKER" = "1" ]; then probe_worker; exit 0; fi
 if [ "$PROBE_CLI" = "1" ]; then
   probe_worker
   for h in $HOSTS; do
-    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && exit 0
+    case "${VRAM_SOURCE[$h]:-}" in measured|probed) exit 0 ;; esac
   done
   echo "no ceiling established (hosts busy, or no model fits)" >&2
   exit 1

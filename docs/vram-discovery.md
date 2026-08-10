@@ -89,6 +89,42 @@ ceiling ≥ max over time of ( Σ size_vram , when nothing is split )
 This is a hard lower bound — it is a configuration that demonstrably worked. It costs
 nothing extra: `/api/ps` is already polled every frame.
 
+### An upper bound, found later: pin the layer count
+
+> **Correction, 2026-08-10 (0.0.32).** Everything above measures what Ollama is
+> *willing* to do, and section 3 treats that as the best obtainable. It is not.
+
+The reason a split under-reports is that Ollama chooses the offload from its own
+pre-flight estimate, which is deliberately cautious. `num_gpu: 999` removes that
+estimate from the loop and forces the runner to attempt the whole allocation. The CUDA
+allocator then answers the question that the HTTP API refuses to:
+
+```
+$ curl -s .../api/generate -d '{"model":"qwen2.5-coder:32b","options":{"num_gpu":999}}'
+{"error":"llama-server process has terminated: exit status 1: cudaMalloc failed: out of
+ memory\nalloc_tensor_range: failed to allocate CUDA0 buffer of size 19407413248\n
+ error loading model: unable to allocate CUDA0 buffer"}
+```
+
+That refusal is an **upper bound** — the first one available anywhere in this
+investigation. Binary-searching `num_ctx` with the layer count pinned closes the ceiling
+from both sides at once, and the result is a bracket rather than an open minimum.
+
+Re-measured this way against both live hosts:
+
+| host | old method (Ollama chooses) | pinned layers | bracket |
+|---|---|---|---|
+| 12 GB box | 12.2 GB | **12.31 GB** | ctx 26920 fit, 28474 OOM'd |
+| dual-GPU box | 36.1 GB | **40.47 GB** | ctx 182896 fit, 184928 OOM'd |
+
+The dual-GPU figure was **11% low**, which is 4.3 GB of real headroom that the bar was
+painting as full. The `+` suffix can honestly come off a figure obtained this way; a
+scan that never provokes a refusal (it runs out of context to ask for first) keeps it.
+
+Cost: a refused load is contained in the `llama-server` subprocess and does not disturb
+the Ollama daemon, which keeps answering `/api/version` and `/api/ps` throughout. The
+idle-host rule still applies, so nothing is ever evicted.
+
 ## 4. Candidate paths
 
 | path | cost | accuracy | invasive? |
@@ -167,6 +203,26 @@ smaller one, converged 2048 → 17408 → 25088 → 28928-split, result 5.78 GB)
 8192 MiB, so 5.78 GB is the conservative lower bound this method is expected to give.
 
 Still a lower bound, still labelled with `+`.
+
+### Phase 4 — pinned layers, added in 0.0.32
+
+The correction in section 3 above changed steps 3 and 4, and the fallback rule in the
+second bullet:
+
+- Every test load sends **`num_gpu: 999`**, so the search reads the GPU rather than
+  Ollama's estimate of it.
+- The stopping condition is an **out-of-memory refusal**, not a split. That refusal is
+  an upper bound, so the result is a bracket and is stored as `source=measured` and
+  drawn without the `+`. A search that exhausts the model's context range without ever
+  provoking one stays `source=probed`, and keeps it.
+- The fallback budget had to be split in two. With layers pinned, a model whose weights
+  alone overflow the card is refused outright instead of quietly splitting, and the
+  12 GB host holds seven models in that class — the old "try up to three" gave up before
+  reaching one that fitted. Cheap rejections are now counted separately, up to 12.
+
+Measured end to end on the 12 GB host: **103 s**, seven rejections at ~8 s each, then
+`2048 → 21504 → 31232-OOM → 26368 → 28800-OOM`, result **12.20 GB measured**. The
+36 GB figure for the dual-GPU host became **40.4 GB** by the same method.
 
 ### What will not be built
 

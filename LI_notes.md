@@ -61,13 +61,26 @@ too (see "Do not overclaim").
    **404**. Ollama knows the number — it prints it to its own log at boot — and serves
    it nowhere. So the bar had to earn its denominator some other way.
 
-8. **So it asks the hardware instead of the API.** The probe loads a model at escalating
-   `num_ctx` and watches for the moment part of it spills into system RAM, then narrows
-   in on the boundary. Output looks like `0.0/7.77+ GB` — and **the `+` is
-   load-bearing**: it means *at least this much fits*, a measured lower bound, not a
-   capacity. When nothing is known it prints `?` and draws **no bar at all**. Refusing
-   to invent a plausible number is the single most important design decision in the
-   repository.
+8. **So it asks the hardware instead of the API.** The probe loads a model and raises
+   `num_ctx` until the box says no, then narrows in on the boundary. When nothing is
+   known it prints `?` and draws **no bar at all** — refusing to invent a plausible
+   number is the single most important design decision in the repository. Output like
+   `0.0/7.77+ GB` carries a **load-bearing `+`**: *at least this much fits*, a lower
+   bound, not a capacity.
+
+8b. **The first version of that probe was measuring the wrong thing, and the error was
+   11%.** It watched for the moment a model spills into system RAM — but *Ollama*
+   decides when to spill, from a pre-flight estimate that deliberately keeps a reserve
+   and can only move whole layers. So the split point measures **Ollama's caution, not
+   the GPU**. Sending `num_gpu: 999` pins every layer to the card and takes the estimate
+   out of the loop; the CUDA allocator then answers directly, and a refusal
+   (`cudaMalloc failed: out of memory`) is an **upper** bound — the one thing the whole
+   investigation had concluded was unobtainable. With a lid on the search the ceiling is
+   *bracketed* instead of merely floored, and the `+` can honestly come off. The
+   dual-GPU box that had reported **36.1 GB** for months actually holds **40.4 GB**:
+   4.3 GB of real headroom that the bar had been painting as full. Good beat for the
+   article — the tool was wrong, and it was wrong in the direction that looks like
+   caution.
 
 9. **Probing someone else's GPU is a trust exercise, so it has rules.** The scan touches
    **idle hosts only** — anything resident and the host is skipped *loudly*, naming what
@@ -104,15 +117,17 @@ too (see "Do not overclaim").
 
 ## Do not overclaim
 
-- The numbers are **specific to two boxes and the qwen3.5/3.6 family** — a 12.2 GB host
-  on Ollama 0.30.6 and a 36.1 GB dual-GPU host on 0.32.5, across 13 model
+- The numbers are **specific to two boxes and the qwen3.5/3.6 family** — a 12.3 GB host
+  on Ollama 0.30.6 and a 40.4 GB dual-GPU host on 0.32.5, across 13 model
   configurations. The `~70 s` reload is what *a 33 GB MoE* costs, not a universal
   constant.
 - The 16k finding is **version dependent**: 0.32.5 truncates an overflowing prompt to
   `num_ctx/2`, 0.30.6 fills the window normally. A newer Ollama is something to
   re-measure, not something to assume.
-- The probed ceiling is a **lower bound on the usable ceiling**, which is itself lower
-  than the hardware total `nvidia-smi` reports. Do not write "detects your VRAM".
+- Even a bracketed ceiling is the **usable** figure, which is still below the hardware
+  total `nvidia-smi` reports — drivers, the desktop session and per-card fragmentation
+  on a multi-GPU box all take their cut. Do not write "detects your VRAM". A scan that
+  never provokes a refusal stays an open lower bound and keeps its `+`.
 - GPU temperature, utilisation, fan and power are **not** shown, and that is a
   deliberate limit: they live in `nvidia-smi`, reaching them needs SSH to every host,
   and needing no credentials is exactly what makes this safe to point at a colleague's

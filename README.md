@@ -34,10 +34,11 @@ version in the header rule.</sub>
   for anything answering the Ollama API and cache what it finds.
 - **Shows every host at a glance** — version, VRAM in use with a bar, response latency,
   and each resident model with its size, quantisation, context and keep-alive countdown.
-- **Establishes an honest lower bound for usable VRAM**, which the API does not tell
-  you: it learns from what it observes, and can probe an idle host by loading a model
-  and expanding until it spills. Automatic for unknown idle hosts, or on demand with
-  `s` / `--probe-vram`.
+- **Measures usable VRAM**, which the API does not expose at all: it learns a floor from
+  what it observes, and can scan an idle host by loading a model with every layer pinned
+  to the GPU and raising the context until the card refuses — which brackets the ceiling
+  from both sides instead of guessing. Automatic for unknown idle hosts, or on demand
+  with `s` / `--probe-vram`.
 - **A live event log** — models loading, expiring, being displaced, hosts dropping off
   the network. State changes you would otherwise have to catch in the act.
 - **Three colour themes**, switchable while running: `dark` for any terminal, `vivid`
@@ -58,14 +59,14 @@ version in the header rule.</sub>
 Real output, two servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.31 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.32 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
-  192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.2 GB    6ms
+  192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.3 GB    6ms
       qwen3.5:9b-ctx80k                9.7B Q4_K_M   8.01/8.01  GB ctx 81920   ttl 16m5s
         ↳ presence_penalty=1.5 (~35% slower — bake 0);
 
-  192.168.100.67   ollama 0.32.5  ████████████████████░░  33.1/36.1 GB    6ms
+  192.168.100.67   ollama 0.32.5  ██████████████████░░░░  33.1/40.4 GB    6ms
       qwen3.6:35b-a3b-q4_K_M-agentic  36.0B Q4_K_M  33.09/33.09 GB ctx 262144  ttl 1h44m
 
   EVENTS
@@ -73,14 +74,15 @@ Real output, two servers busy, 104-column terminal:
 ```
 
 Each host line is `address · version · VRAM bar · used/ceiling · latency`, followed by
-one line per resident model. The `↳` line under a model is a configuration warning; the
-`+` after a ceiling means "at least this much" rather than a known total.
+one line per resident model. The `↳` line under a model is a configuration warning; a
+`+` after a ceiling means "at least this much" rather than a figure with a known upper
+edge — see [VRAM ceilings](#vram-ceilings).
 
 <details>
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.31 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.32 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -175,7 +177,7 @@ auto-discovered — use `-H 127.0.0.1`.
 To give a host a known VRAM ceiling, add it to `VRAM_TOTAL` near the top of the script:
 
 ```bash
-declare -A VRAM_TOTAL=( [192.168.100.37]=12.2 [192.168.100.67]=36.1 )
+declare -A VRAM_TOTAL=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 ```
 
 ---
@@ -228,21 +230,24 @@ you throughput right now** — in every theme.
 ## VRAM ceilings
 
 A bar needs a denominator, and the Ollama API does not expose one — there is no
-total-VRAM field on any endpoint. Three sources are used instead:
+total-VRAM field on any endpoint. Four sources are used instead:
 
 | shown as | source | meaning |
 |---|---|---|
-| `33.1/36.1 GB` | the `VRAM_TOTAL` table | a figure someone measured and stands behind |
-| `0.0/7.77+ GB` | **probed** or **learned** | *at least* this much fits — a lower bound |
+| `33.1/40.4 GB` | the `VRAM_TOTAL` table | a figure someone measured and stands behind |
+| `33.1/40.4 GB` | **measured** | the scan found the edge: the ceiling is bracketed |
+| `0.0/7.77+ GB` | **probed** or **learned** | *at least* this much fits — an open lower bound |
 | `0.0 GB/?` | nothing known | no bar drawn, rather than a guessed one |
 
 The **`+` is load-bearing.** A bar that silently meant either "this is the capacity" or
-"it is at least this much" would be worse than no bar.
+"it is at least this much" would be worse than no bar. It comes off only when the scan
+has an *upper* bound as well — when the GPU has refused something larger — and the true
+figure is therefore known to within a few percent.
 
 **Learned** costs nothing: `/api/ps` is already polled every frame, so the largest total
-ever seen *fully resident* is recorded. **Scanning** gets a tighter figure by loading a
-model at escalating `num_ctx` until it splits — which is also how a host with nothing
-resident gets bootstrapped, since passive observation cannot start from an idle server:
+ever seen *fully resident* is recorded. **Scanning** gets a far tighter figure, and is
+also how a host with nothing resident gets bootstrapped, since passive observation
+cannot start from an idle server:
 
 ```shell
 # automatic on startup, for any idle host whose ceiling is unknown or only learned
@@ -254,11 +259,40 @@ resident gets bootstrapped, since passive observation cannot start from an idle 
 ./ollamaFarm.sh --probe-vram 10.0.0.5   # one host
 ```
 
-It is safe on a shared server: **idle hosts only** — anything resident and the host is
-skipped, loudly, naming what it would have had to evict; an explicit `keep_alive: 0`
-request unloads the model after every test load; and it runs **detached**, so the display
-keeps refreshing while progress appears in the event log. A second scan while one runs
-is refused.
+### Why the scan pins the layer count
+
+Every test load sends `num_gpu: 999`, and that one option is the difference between a
+guess and a measurement.
+
+Left to itself, Ollama decides how many layers to offload from its own pre-flight
+estimate, and that estimate is deliberately cautious: it holds a reserve, it can only
+move whole layers, and it would far rather split into system RAM than risk an
+allocation failure. So the largest footprint Ollama will *voluntarily* place is well
+short of what the card actually holds. Watching for the split therefore measures
+**Ollama's caution, not the GPU** — on the dual-GPU box here it stopped at 36.1 GB.
+
+Pinning the layer count takes the estimate out of the loop and lets the CUDA allocator
+answer directly:
+
+| outcome | what it proves |
+|---|---|
+| load succeeds | that many bytes genuinely fit — a lower bound, and a tight one |
+| load is refused (`cudaMalloc failed: out of memory`) | they genuinely do not — an **upper** bound |
+
+The second row is new, and it is the whole point: with a lid on the search the result
+is a bracket, not an open-ended minimum. Re-measured that way, the same box takes
+**40.4 GB** — 11% more than the old method could ever report, and 4.3 GB of headroom
+that was being drawn as full.
+
+A refused load is contained in the `llama-server` subprocess; the Ollama daemon itself
+is unaffected and keeps serving.
+
+### Safety
+
+**Idle hosts only** — anything resident and the host is skipped, loudly, naming what it
+would have had to evict; an explicit `keep_alive: 0` request unloads the model after
+every test load; and it runs **detached**, so the display keeps refreshing while
+progress appears in the event log. A second scan while one runs is refused.
 
 Durations: **~15–60 s** for a small box, **several minutes** for a large one — reach
 needs a large model, and a 33 GB model alone takes ~70 s per load.
@@ -267,35 +301,43 @@ needs a large model, and a 33 GB model alone takes ~70 s per load.
 <summary><code>--probe-vram</code> in detail: real output, exit codes, scripting</summary>
 
 ```console
-$ ./ollamaFarm.sh --probe-vram 192.168.100.54
-scan started 17:57:49
-probe 192.168.100.54: llama3.2-vision:11b (max ctx 131072)
-  llama3.2-vision:11b splits even at ctx 2048 — too large, trying a smaller model
-probe 192.168.100.54: minicpm-v:latest (max ctx 32768)
-  minicpm-v:latest splits even at ctx 2048 — too large, trying a smaller model
-probe 192.168.100.54: qwen3.5:4b-ctx54k (max ctx 262144)
-  ctx 2048: resident 3.06 GB
-  ctx 132096: resident 7.22 GB
-  ctx 197120: SPLIT — ceiling is below this
-  ctx 164608: SPLIT — ceiling is below this
-  ctx 148352: resident 7.77 GB
-  ctx 156480: SPLIT — ceiling is below this
-  ctx 152416: SPLIT — ceiling is below this
-RESULT 192.168.100.54 7.77
-scan finished 17:58:57
+$ ./ollamaFarm.sh --probe-vram 192.168.100.37
+scan started 12:16:14
+probe 192.168.100.37: qwen2.5-coder:32b (max ctx 32768)
+  qwen2.5-coder:32b will not fit even at ctx 2048 — trying a smaller model
+probe 192.168.100.37: qwen3-coder:30b (max ctx 262144)
+  qwen3-coder:30b will not fit even at ctx 2048 — trying a smaller model
+… five more too large to place, elided …
+probe 192.168.100.37: qwen3:8b-q8_0 (max ctx 40960)
+  ctx 2048: resident 8.59 GB
+  ctx 21504: resident 11.48 GB
+  ctx 31232: OUT OF MEMORY — the ceiling is below this
+  ctx 26368: resident 12.20 GB
+  ctx 28800: OUT OF MEMORY — the ceiling is below this
+RESULT 192.168.100.37 12.20 measured
+scan finished 12:17:57
 ```
 
-Note the two fallbacks: the largest model, and then the second largest, split even at
-the minimum context, so the scan moved on to one that fits. That is the reach problem —
-it wants the biggest model that still fits, and finds it by trying.
+Two things are happening there. The **fallback chain**: seven models in a row could not
+be placed on a 12 GB card, so the scan kept stepping down until one fitted. That is the
+reach problem — it wants the biggest model that still fits, and finds it by trying, and
+a rejection is cheap because the allocator refuses before any weights move.
+
+Then the **bracket**: 26368 fitted at 12.20 GB and 28800 did not, so the ceiling is
+pinned between them. That is why the last field reads `measured` rather than `probed`,
+and why the bar for this host carries no `+`.
 
 **The result is used, not just printed.** It is written to
-`$XDG_CONFIG_HOME/ollamafarm/vram` as `source=probed`, and every later run draws its bar
-against it:
+`$XDG_CONFIG_HOME/ollamafarm/vram` as `source=measured`, and every later run draws its
+bar against it:
 
 ```
-192.168.100.54   ollama 0.32.6  ░░░░░░░░░░░░░░░░░░░░░░   0.0/7.77+ GB    7ms
+192.168.100.37   ollama 0.30.6  ░░░░░░░░░░░░░░░░░░░░░░   0.0/12.20 GB    7ms
 ```
+
+Had the search run out of context to ask for without ever provoking a refusal, it would
+have stored `source=probed` and drawn `0.0/12.20+ GB` instead — same figure, weaker
+claim.
 
 | exit code | meaning |
 |---|---|
@@ -307,7 +349,9 @@ against it:
 ./ollamaFarm.sh --probe-vram 10.0.0.5 || echo "host busy, try later"
 ```
 
-A probed value is never overwritten by a smaller passive observation.
+A scanned value is never overwritten by a smaller passive observation. A *larger* one
+does replace it, and drops the host back to `learned`: an observation that beat the
+bracket has outgrown it, so the upper edge no longer holds.
 
 </details>
 
@@ -354,8 +398,8 @@ any kind — only a diff across time reveals it.
 <details>
 <summary>Where those numbers come from</summary>
 
-Measured, not estimated, across two servers — a dual-GPU box with 36.1 GB of usable
-VRAM (Ollama 0.32.5) and a 12.2 GB box (0.30.6) — over 13 model configurations of the
+Measured, not estimated, across two servers — a dual-GPU box with 40.4 GB of usable
+VRAM (Ollama 0.32.5) and a 12.3 GB box (0.30.6) — over 13 model configurations of the
 qwen3.5/3.6 family.
 
 | claim | how it was established |
@@ -434,7 +478,7 @@ bitten by: [docs/agents.md](docs/agents.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.31 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.32 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
