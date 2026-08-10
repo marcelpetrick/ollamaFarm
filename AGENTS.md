@@ -205,9 +205,10 @@ Semantic versioning, patch-per-commit.
   from instead of silently letting it drift.
 - The version renders in the header (`┌─ Ollama farm 0.0.N ──…──┐`), so a screenshot
   identifies its build, and `--version` prints it.
-- **Do not create git tags.** They were used briefly and removed: the version lives
-  in the script, and a second copy in a ref is one more thing that can disagree with
-  it. `VERSION` is the single marker.
+- **Do not create release tags by hand.** The manual Release workflow creates
+  `vN.N.N` from the script's `VERSION` only after the quality gate passes. This keeps
+  `VERSION` as the single source of truth while giving published releases a stable
+  Git reference.
 
 While the major version is 0 the interface is not stable; a breaking change is
 marked with `!` in the commit type and a `BREAKING CHANGE:` footer, but does not

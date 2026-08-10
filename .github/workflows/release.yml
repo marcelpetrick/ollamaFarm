@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    # Releases identify states of the main line, not arbitrary workflow branches.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ github.sha }}
+
+    steps:
+      # Keep the release path independent of downloadable actions, like quality.yml.
+      # Full history and tags are required to build notes since the previous release.
+      - name: Fetch repository history
+        run: |
+          set -euo pipefail
+          git init --initial-branch=ci .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --force --tags origin \
+            "+refs/heads/master:refs/remotes/origin/master"
+          git checkout --detach "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/master)"
+
+      - name: Read and validate version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' ollamaFarm.sh)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v${version}"
+          if git rev-parse --quiet --verify "refs/tags/${tag}" >/dev/null; then
+            printf 'Release tag %s already exists\n' "$tag" >&2
+            exit 1
+          fi
+          printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Run quality gate
+        run: ./localPipeline.sh --no-live
+
+      - name: Build release files and notes
+        run: |
+          set -euo pipefail
+          install -Dm755 ollamaFarm.sh release/ollamaFarm.sh
+          (cd release && sha256sum ollamaFarm.sh > SHA256SUMS)
+
+          previous_tag=$(git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            --sort=-version:refname | sed -n '1p')
+          if [ -n "$previous_tag" ]; then
+            range="${previous_tag}..HEAD"
+            intro="Changes since ${previous_tag}."
+          else
+            range="HEAD"
+            intro="Changes in the first tagged release."
+          fi
+
+          # Backticks and dollar-like text below are literal Markdown, not shell
+          # expressions. Single quotes prevent accidental command expansion.
+          # shellcheck disable=SC2016
+          {
+            printf '## Changes\n\n%s\n\n' "$intro"
+            git log "$range" --no-merges --pretty='format:- %s (`%h`)'
+            printf '\n\n## Install\n\n'
+            printf 'Download `ollamaFarm.sh`, verify it with `SHA256SUMS`, then run:\n\n'
+            printf '```shell\nchmod +x ollamaFarm.sh\n./ollamaFarm.sh --help\n```\n'
+            printf '\nRequires Bash, `curl`, `jq`, and `awk`.\n'
+          } > release-notes.md
+
+      - name: Tag and publish release
+        run: |
+          set -euo pipefail
+          # gh creates the tag at RELEASE_SHA. Without --draft or --prerelease,
+          # the release is published immediately as a normal release.
+          gh release create "${{ steps.version.outputs.tag }}" \
+            release/ollamaFarm.sh \
+            release/SHA256SUMS \
+            --target "$RELEASE_SHA" \
+            --title "ollamaFarm ${{ steps.version.outputs.version }}" \
+            --notes-file release-notes.md \
+            --latest
