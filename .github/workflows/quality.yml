@@ -13,7 +13,14 @@ concurrency:
 jobs:
   quality:
     name: Repository quality
-    runs-on: ubuntu-latest
+    # Pinned, not "ubuntu-latest". The runner image is this workflow's only real
+    # dependency -- there are no actions to pin and no package manifest -- and it is
+    # what supplies bash, shellcheck and jq. A floating label re-points without a
+    # commit, so a shellcheck that ships a new default rule set would fail a build
+    # nothing in this repository had touched. ubuntu-latest resolves to 24.04 today,
+    # so this pin changes nothing now and only stops the silent roll later.
+    # ubuntu-26.04 exists but is still preview; revisit when it reaches GA.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:

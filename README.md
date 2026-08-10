@@ -59,7 +59,7 @@ version in the header rule.</sub>
 Real output, two servers busy, 104-column terminal:
 
 ```
-┌─ Ollama farm 0.0.32 ───────────────────────────────────────────────────────────────────────┐
+┌─ Ollama farm 0.0.33 ───────────────────────────────────────────────────────────────────────┐
   2026-08-06 15:36:49   every 1s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.37   ollama 0.30.6  ██████████████░░░░░░░░   8.0/12.3 GB    6ms
@@ -82,7 +82,7 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.32 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.33 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -478,7 +478,7 @@ bitten by: [docs/agents.md](docs/agents.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.32 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.33 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 **No git tags are used.** The version in the script is the only marker, so there is
