@@ -1,7 +1,10 @@
-# agents.md
+# AGENTS.md
 
 Guidance for AI coding agents working in this repository. Humans may find it useful
 too, but it exists because agents need the constraints stated explicitly.
+
+*(Lived at `docs/agents.md` until 0.0.35. Moved to the repository root because that is
+where agent tooling looks for it by convention.)*
 
 ## What this project is
 
@@ -9,6 +12,17 @@ One Bash script, `ollamaFarm.sh`, that polls the Ollama HTTP API on a few hosts 
 renders a terminal dashboard. Plus `localPipeline.sh`, which checks it. That is the
 whole repository. Resist the urge to add a package manifest, a build system, a test
 framework, or a second language.
+
+Orientation, in the order worth reading:
+
+| file | what it is for |
+|---|---|
+| `ollamaFarm.sh` | the tool. Comments explain *why*, and are load-bearing |
+| `localPipeline.sh` | the quality gate. CI runs exactly this |
+| `README.md` | user-facing, and the doc/code agreement stage tests it |
+| `docs/architecture.md` | C4 context / container / component / dynamic views |
+| `docs/vram-discovery.md` | the VRAM investigation, including the wrong turns |
+| `LI_notes.md` | source material for an article — keep its claims true |
 
 ## Hard rules
 
@@ -57,6 +71,68 @@ These have all been hit and fixed once. Do not reintroduce them.
 - **Eviction is not atomic.** A model unloads, and its replacement becomes resident
   seconds to a minute later. Detection correlates across polls within
   `SUSPECT_WINDOW`; a naive "vanished while something appeared" test never matches.
+- **Check for a running instance before believing the config cache.** A TUI left open in
+  another terminal keeps writing `~/.config/ollamafarm/vram`, and an *older* build writes
+  it in an older format. This cost real time once: a scan logged `RESULT … measured`
+  while the cache kept saying `probed`, which looked exactly like a bug in the writer
+  and was actually a stale 0.0.31 process draining the shared `probe.log`. Run
+  `ps aux | grep ollamaFarm` first, or point `XDG_CONFIG_HOME` at a temp directory to
+  get an isolated run.
+- **An out-of-memory refusal bounds the model, not the machine.** Covered in full under
+  "The VRAM probe" below. It is the single easiest wrong conclusion to reach here.
+- **Validate mermaid with `mmdc`, do not eyeball it.** `docs/architecture.md` is checked
+  by rendering every block. A `;` inside a `Note` silently terminates the statement and
+  fails the parse — that one shipped past a careful read-through and was caught only by
+  the renderer.
+
+## The VRAM probe
+
+This is the only code here that **writes** to a server, and the only place a plausible
+number can be invented without anyone noticing. Treat it accordingly.
+
+**The safety envelope, which is not negotiable:**
+
+1. **Idle hosts only.** Anything resident and the host is skipped, loudly, naming what
+   would have been evicted. `.67` belongs to a colleague and an eviction costs them a
+   ~70 s reload.
+2. **`keep_alive: 0` after every test load**, so the host is left as idle as it was
+   found.
+3. **One scan at a time**, enforced by `probe.lock` holding a live pid. Every entry
+   point takes it — the `s` key, auto-scan, and `--probe-vram`.
+4. It runs **detached** from the TUI, and streams progress through `probe.log`.
+
+**The conclusion that is easy to get wrong.** The scan pins every layer to the GPU
+(`num_gpu: 999`) and raises `num_ctx` until the card refuses. That refusal looks like an
+upper bound on the hardware. **It is not — it bounds the model being loaded.** Measured
+on the dual-GPU host, both runs idle, minutes apart:
+
+| model | largest fully resident |
+|---|---|
+| `qwen3.6:27b-q8_0` | 40.47 GB |
+| `qwen3.6:27b-mtp-q8_0-ctx60k` | 34.69 GB |
+
+5.8 GB of spread on one machine, because layers divide unevenly across two cards and one
+fills while the other still has room. A `measured` ceiling source was built on the wrong
+reading of this, shipped, and removed one commit later.
+
+So: **every scanned figure is a lower bound and keeps its `+`.** A passive observation
+that beats the scan is expected, not suspicious. If you find yourself about to remove
+the `+`, re-read `docs/vram-discovery.md` first.
+
+## Verifying, before you claim anything
+
+The pipeline proves the script parses and renders. It does not prove a *measurement* is
+right. For anything touching the probe or the ceilings:
+
+- **Run it against a real host, end to end**, not just the unit of code you changed.
+- **Run it twice with different inputs** where the input could matter. One run against
+  one model is what made the `measured` mistake survive review; a second run with a
+  different model is what killed it.
+- **Isolate the environment** — `XDG_CONFIG_HOME=$(mktemp -d)` — so a running instance
+  or a previous session's cache cannot contaminate or explain away the result.
+- **Check the hosts are left idle afterwards**, and that no `probe.lock` or worker is
+  stranded.
+- Say in the commit body what you measured, and say what you did **not**.
 
 ## Commit style
 
