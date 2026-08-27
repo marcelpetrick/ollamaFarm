@@ -1,3 +1,6 @@
+# Manual by design: VERSION is the single release input. This workflow accepts no
+# separately typed version, reruns the complete quality gate, and publishes the one
+# executable script plus its checksum from master.
 name: Release
 
 on:

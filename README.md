@@ -4,9 +4,11 @@
 on your network, shows what each one has resident, and keeps up at 1 Hz — in the spirit
 of `htop` and `btop`, for LLM boxes instead of CPUs.
 
-[![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
-[![license: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 [![Quality](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml)
+[![Release](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/release.yml/badge.svg)](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/marcelpetrick/ollamaFarm?sort=semver)](https://github.com/marcelpetrick/ollamaFarm/releases/latest)
+[![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
+[![license: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue)](LICENSE)
 
 One file, no runtime, no daemon, no agent on the servers: `curl` + `jq` + `awk` and a
 terminal.
@@ -83,7 +85,7 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.39 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.40 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  l history:10  d s  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
@@ -475,9 +477,11 @@ or press `m` / `e`, if you see `…frame clipped to terminal height`.
 
 The pipeline is self-contained and needs no network for its mandatory stages; the live
 smoke test against a real server is optional and skipped when no host answers. Every
-push runs the mandatory stages in GitHub Actions; the Quality badge at the top links to
-the latest result for `master`. The workflow shallow-fetches the triggering commit and
-uses the runner's installed tools directly, so it depends on no downloadable actions.
+push to `master`, pull request against `master`, and manual dispatch runs the mandatory
+stages in GitHub Actions. The Quality badge at the top links to the latest `master`
+result. The workflow shallow-fetches the exact triggering ref, verifies its commit SHA,
+and uses the pinned Ubuntu 24.04 runner's installed tools directly, so it depends on no
+downloadable actions.
 
 Maintainers can run the Release workflow manually from `master`. It reruns the quality
 gate, reads the version from `ollamaFarm.sh`, creates the corresponding `vN.N.N` tag,
@@ -494,7 +498,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.39 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.40 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

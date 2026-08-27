@@ -1,7 +1,15 @@
+# The repository has one quality gate: localPipeline.sh. CI invokes that same script
+# instead of reconstructing its checks in YAML, so local and hosted verification stay
+# identical. The checkout is implemented with git itself to keep this one-script
+# project independent of downloadable Actions.
 name: Quality
 
 on:
   push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,7 +40,11 @@ jobs:
           set -euo pipefail
           git init --initial-branch=ci .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          # GITHUB_REF names the pushed branch, pull-request merge ref, or manually
+          # selected branch. Verify FETCH_HEAD as well, so the gate cannot silently
+          # test a different revision from the one GitHub says triggered the run.
+          git fetch --no-tags --depth=1 origin "$GITHUB_REF"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
 
       - name: Show quality tool versions
