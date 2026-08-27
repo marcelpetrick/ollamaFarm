@@ -56,16 +56,17 @@
 # Settings (interval and toggles) persist to $XDG_CONFIG_HOME/ollamafarm/config,
 # so the refresh rate you picked is still there next time.
 #
-# Scope: this monitor reads the Ollama HTTP API and nothing else. GPU temperature,
-# utilisation, fan and power are therefore out of scope -- the API does not expose
-# them, and reaching nvidia-smi on the hosts would need SSH access this tool does not
-# assume it has. Everything shown is real API data.
+# Scope: the monitoring loop reads the Ollama HTTP API and nothing else. GPU
+# temperature, utilisation, fan and power are therefore out of scope -- the API does
+# not expose them, and reaching nvidia-smi on the hosts would need SSH access this tool
+# does not assume it has. The guarded VRAM scan below is the one write-path exception.
 #
 # On discovery: hosts are found by probing /api/version across the /24, which only
-# reads. Usable VRAM is a separate, deliberately opt-in matter: the API has no
-# total-VRAM field anywhere, so the figure has to be established by loading a model
-# with every layer pinned to the GPU and raising num_ctx until the card refuses. That
-# writes to the server, so it runs against IDLE hosts only and never evicts anything.
+# reads. Usable VRAM is separate: the API has no total-VRAM field anywhere, so the
+# figure has to be established by loading a model with every layer pinned to the GPU
+# and raising num_ctx until the card refuses. That writes to the server, so automatic
+# and manual scans both run against IDLE hosts only and never evict anything;
+# --no-auto-scan disables the automatic bootstrap.
 # Known ceilings are listed in VRAM_TOTAL below; a host with neither a table entry nor
 # a scan shows "?" and gets no bar rather than a guessed one.
 
@@ -73,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.38"
+VERSION="0.0.39"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -740,12 +741,12 @@ plog() {
 # allocator answer the question directly:
 #
 #   the load succeeds -> that many bytes genuinely fit. A lower bound, but a tight one.
-#   the load OOMs     -> they genuinely do not. This is an UPPER bound, and it is the
-#                        first upper bound this tool has ever been able to obtain.
+#   the load OOMs     -> this model cannot fit at that context. It narrows this search,
+#                        but does not establish the machine's ceiling: layer placement
+#                        can make another model reach higher on the same GPUs.
 #
-# Having both ends is what turns "at least this much" into a measurement. See
-# docs/vram-discovery.md; the failed load is contained in the llama-server subprocess
-# and never takes the Ollama daemon itself down.
+# See docs/vram-discovery.md; the failed load is contained in the llama-server
+# subprocess and never takes the Ollama daemon itself down.
 probe_load() {  # probe_load <host> <model> <ctx>
   local host="$1" model="$2" ctx="$3" base="http://$1:$PORT" resp err r
   resp=$(curl -s --max-time 900 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
@@ -826,8 +827,8 @@ probe_host() {
     plog "  ctx $lo: resident $(printf '%.2f' "$vram") GB"
 
     # Binary search the largest num_ctx that still fits entirely on the GPU. Bounded
-    # at 7 loads. Every "oom" narrows the bracket from ABOVE -- that upper edge is
-    # what makes the final figure a measurement rather than an open-ended minimum.
+    # at 7 loads. Every "oom" narrows the bracket for this model from above; the best
+    # successful load remains a lower bound on what the machine can hold.
     local i=0
     while [ "$i" -lt 7 ] && [ $(( hi - lo )) -gt 4096 ]; do
       i=$((i + 1))
@@ -859,7 +860,7 @@ probe_host() {
     # Persist from the worker as well, so a standalone --probe-worker run is not lost
     # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
     # different host survives.
-    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]="$src"
+    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]=probed
     save_vram_cache
   else
     plog "SKIP $host — could not place any model fully in VRAM"
@@ -962,13 +963,19 @@ drain_probe_log() {
   [ -r "$PROBE_LOG" ] || return 0
   local size; size=$(wc -c < "$PROBE_LOG" 2>/dev/null) || return 0
   [ "$size" -le "$PROBE_OFFSET" ] && return 0
-  local line
+  local line result_host result_g
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     case "$line" in
-      RESULT*) set -- $line
-               VRAM_LEARNED[$2]="$3"; VRAM_SOURCE[$2]=probed; save_vram_cache
-               event "$C_GRN" "$2: ceiling at least $3 GB (probed)" ;;
+      RESULT*) read -r _ result_host result_g _ <<< "$line"
+               if [ -n "$result_host" ] && [[ "$result_g" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                 VRAM_LEARNED[$result_host]="$result_g"
+                 VRAM_SOURCE[$result_host]=probed
+                 save_vram_cache
+                 event "$C_GRN" "$result_host: ceiling at least $result_g GB (probed)"
+               else
+                 event "$C_YEL" "ignored malformed probe result"
+               fi ;;
       SKIP*)   event "$C_YEL" "${line#SKIP }" ;;
       *)       event "$C_DIM" "$line" ;;
     esac
