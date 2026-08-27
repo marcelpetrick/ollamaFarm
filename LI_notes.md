@@ -35,8 +35,9 @@ too (see "Do not overclaim").
 
 4. **The switches are the product, not the garnish.** `+`/`-` steps a refresh ladder
    `0.25 0.5 1 2 3 5 10 30` s; `p` pauses (and a paused frame genuinely polls nothing);
-   `v m w e` toggle VRAM bars, per-model detail, config warnings, event log; `d`
-   re-discovers; `t` cycles themes; `s` re-scans idle hosts; `h` is the help overlay.
+   `v m w e` toggle VRAM bars, per-model detail, config warnings, event log; `l`
+   cycles how many events are retained; `d` re-discovers; `t` cycles themes; `s`
+   re-scans idle hosts; `h` is the help overlay.
    All of it persists to `~/.config/ollamafarm/config`, so the rate you chose at 2 a.m.
    is still there tomorrow.
 

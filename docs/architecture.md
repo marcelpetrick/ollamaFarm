@@ -62,7 +62,7 @@ flowchart TB
   end
 
   subgraph files ["Config directory — the only channel between roles"]
-    cfg[("config<br/><i>interval, toggles, theme</i>")]
+    cfg[("config<br/><i>interval, toggles,<br/>history length, theme</i>")]
     hosts[("hosts<br/><i>cached discovery</i>")]
     vram[("vram<br/><i>host, GB, source, epoch</i>")]
     plog[("probe.log<br/><i>worker progress, append-only</i>")]
@@ -120,7 +120,7 @@ flowchart TB
     diff["<b>Eviction detector</b><br/>diffs resident model sets<br/>between consecutive polls"]
     ceil["<b>Ceiling resolver</b><br/>picks the denominator<br/>and how to label it"]
     warn["<b>Config warnings</b><br/>presence_penalty, missing num_ctx<br/><i>/api/show, cached per host+model</i>"]
-    events["<b>Event ring buffer</b><br/>last 6 state changes"]
+    events["<b>Event ring buffer</b><br/>last 5 / 10 / 20 / 50 state changes"]
     paint["<b>Frame painter</b><br/>erase-to-EOL per line,<br/>repaint from \\e[H"]
   end
 
@@ -132,7 +132,7 @@ flowchart TB
   paint --> keys
   keys -->|"d"| disc
   keys -->|"s"| probe
-  keys -->|"+ - v m w e p t h"| geom
+  keys -->|"+ - v m w e l p t h"| geom
   diff --> events
   disc --> events
   probe --> events

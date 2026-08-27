@@ -234,7 +234,7 @@ stage_doc_agreement() {
 
   # Config keys written must be the same set the README documents.
   local k
-  for k in idx show_bars show_models show_warn show_events theme; do
+  for k in idx show_bars show_models show_warn show_events event_max theme; do
     grep -qF "$k" "$README" || problems+="cfg:$k "
     grep -qF "$k" "$SCRIPT" || problems+="cfg:$k(script) "
   done
@@ -281,6 +281,7 @@ stage_robustness() {
     printf 'idx=999\n'
     printf 'show_bars=hax\n'
     printf 'show_models=$(touch %s)\n' "$canary"
+    printf 'event_max=999\n'
     printf '`touch %s.bt`\n' "$canary"
     printf 'not_a_key=1\n'
   } > "$tmp_cfg/ollamafarm/config"
@@ -292,6 +293,13 @@ stage_robustness() {
   [ -e "$canary" ] || [ -e "$canary.bt" ] && problems+="config-injection "
   # idx=999 is out of range and must be rejected, leaving the 1 s default.
   printf '%s' "$out" | grep -q "every 1s" || problems+="bad-idx-not-rejected "
+  printf '%s' "$out" | grep -q "history:10" || problems+="bad-event-max-not-rejected "
+
+  # A valid persisted history limit must reach the rendered UI. This exercises the
+  # real config loader rather than merely checking that the key exists in the file.
+  printf 'event_max=20\n' > "$tmp_cfg/ollamafarm/config"
+  out=$(XDG_CONFIG_HOME="$tmp_cfg" timeout 6 "$SCRIPT" -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
+  printf '%s' "$out" | grep -q "history:20" || problems+="event-max-not-loaded "
 
   rm -rf "$tmp_cfg"
   if [ -n "$problems" ]; then

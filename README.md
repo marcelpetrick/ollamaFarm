@@ -83,8 +83,8 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.37 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
-  2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  d  p pause  h help  q quit]
+┌─ Ollama farm 0.0.38 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+  2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  l history:10  d s  p pause  h help  q quit]
 
   192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
       hoarder-70b:q8_0                69.9B Q8_0    31.40/35.80 GB ctx 4096    ttl 12s   ⚠ SPLIT→CPU (5.3x slower)
@@ -96,7 +96,7 @@ edge — see [VRAM ceilings](#vram-ceilings).
 
   192.168.100.37   ollama 0.30.6  UNREACHABLE (USB ethernet adapter up?)
 
-  EVENTS
+  EVENTS (last 10)
     03:04:31 loaded hoarder-70b:q8_0 on 192.168.100.13
     03:04:44 tiny-yolk:0.5b vanished on 192.168.100.13, 238s ttl left — suspected eviction, watching
     03:04:52 EVICTED tiny-yolk:0.5b on 192.168.100.13 → hoarder-70b:q8_0 after 8s (~70 s reload penalty)
@@ -125,6 +125,7 @@ guessed.
 | `m` | per-model detail |
 | `w` | the `↳` config warnings |
 | `e` | event log |
+| `l` | event history length — cycles `5` → `10` → `20` → `50` entries |
 | `d` | re-run host discovery |
 | `s` | re-scan idle hosts for their VRAM ceiling |
 | `t` | cycle colour theme (`dark` → `vivid` → `light`) |
@@ -370,7 +371,7 @@ diagrams: [docs/architecture.md](docs/architecture.md).
 
 ## Configuration
 
-Interval, toggles and theme persist to `$XDG_CONFIG_HOME/ollamafarm/config`
+Interval, toggles, event history length and theme persist to `$XDG_CONFIG_HOME/ollamafarm/config`
 (`~/.config/ollamafarm/config`):
 
 ```
@@ -379,6 +380,7 @@ show_bars=1
 show_models=1
 show_warn=1
 show_events=1
+event_max=10     # cycled by l: 5, 10, 20 or 50 retained entries
 theme=dark
 ```
 
@@ -492,7 +494,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.37 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.38 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

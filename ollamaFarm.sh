@@ -36,6 +36,7 @@
 #   -  /  +    faster / slower refresh      p   pause (p again to resume)
 #   v          VRAM bars on/off             m   per-model detail on/off
 #   w          warnings on/off              e   event log on/off
+#   l          event history length (5 / 10 / 20 / 50 entries)
 #   d          re-run host discovery        t   cycle colour theme
 #   s          scan idle hosts for their VRAM ceiling (see docs/vram-discovery.md)
 #   h  or  ?   help overlay                 q   quit
@@ -72,7 +73,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.37"
+VERSION="0.0.38"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -96,6 +97,8 @@ SHOW_BARS=1
 SHOW_MODELS=1
 SHOW_WARN=1
 SHOW_EVENTS=1
+EVENT_LIMITS=(5 10 20 50)
+EVENT_MAX=10               # number of state changes retained; cycled with "l"
 PAUSED=0
 SHOW_HELP=0
 
@@ -125,7 +128,7 @@ PROBE_LOCK="$CFG_DIR/probe.lock"
 # hand-edited config must not be able to break the run or inject commands.
 load_config() {
   [ -r "$CFG" ] || return 0
-  local k v t
+  local k v t limit
   while IFS='=' read -r k v; do
     case "$k" in
       idx)          [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -lt "${#INTERVALS[@]}" ] && IDX="$v" ;;
@@ -133,6 +136,9 @@ load_config() {
       show_models)  [[ "$v" =~ ^[01]$ ]] && SHOW_MODELS="$v" ;;
       show_warn)    [[ "$v" =~ ^[01]$ ]] && SHOW_WARN="$v" ;;
       show_events)  [[ "$v" =~ ^[01]$ ]] && SHOW_EVENTS="$v" ;;
+      event_max)    for limit in "${EVENT_LIMITS[@]}"; do
+                      [ "$v" = "$limit" ] && EVENT_MAX="$v"
+                    done ;;
       theme)        for t in "${THEMES[@]}"; do [ "$v" = "$t" ] && THEME="$v"; done ;;
     esac
   done < "$CFG"
@@ -145,6 +151,7 @@ save_config() {
     printf 'show_models=%s\n' "$SHOW_MODELS"
     printf 'show_warn=%s\n' "$SHOW_WARN"
     printf 'show_events=%s\n' "$SHOW_EVENTS"
+    printf 'event_max=%s\n' "$EVENT_MAX"
     printf 'theme=%s\n' "$THEME"
   } > "$CFG.tmp" 2>/dev/null && mv -f "$CFG.tmp" "$CFG" 2>/dev/null
 }
@@ -415,7 +422,6 @@ load_vram_cache
 # ------------------------------------------------------------- event log ------
 # Ring buffer of state changes. This is where eviction thrash becomes visible:
 # a snapshot cannot show it, only a diff between consecutive polls can.
-EVENT_MAX=6
 declare -a EVENTS=()
 declare -A PREV_MODELS=()   # host -> space-separated resident model names
 declare -A PREV_TTL=()      # "host|model" -> seconds of keep_alive left when last seen
@@ -431,6 +437,20 @@ SUSPECT_WINDOW=150
 event() {  # event <colour> <text>
   EVENTS+=("$(date '+%H:%M:%S')|$1|$2")
   while [ "${#EVENTS[@]}" -gt "$EVENT_MAX" ]; do EVENTS=("${EVENTS[@]:1}"); done
+}
+
+cycle_event_max() {
+  local i
+  for i in "${!EVENT_LIMITS[@]}"; do
+    if [ "${EVENT_LIMITS[$i]}" = "$EVENT_MAX" ]; then
+      EVENT_MAX="${EVENT_LIMITS[$(( (i + 1) % ${#EVENT_LIMITS[@]} ))]}"
+      break
+    fi
+  done
+  # Shrinking the limit takes effect immediately instead of waiting for enough new
+  # events to arrive. The oldest entries are the ones discarded by the ring buffer.
+  while [ "${#EVENTS[@]}" -gt "$EVENT_MAX" ]; do EVENTS=("${EVENTS[@]:1}"); done
+  save_config
 }
 
 # ------------------------------------------------- per-model config warnings ---
@@ -673,6 +693,8 @@ help_overlay() {
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST"
   emit '    %se%s    event log                  %sd%s  re-discover    %st%s  theme (%s)\n' \
     "$C_B" "$C_RST" "$C_B" "$C_RST" "$C_B" "$C_RST" "$THEME"
+  emit '    %sl%s    event history (%s entries)\n' \
+    "$C_B" "$C_RST" "$EVENT_MAX"
   emit '    %ss%s    scan idle hosts for their VRAM ceiling (minutes on a large box)\n' \
     "$C_B" "$C_RST"
   emit '    %sh ?%s  close this help\n' "$C_B" "$C_RST"
@@ -1015,7 +1037,8 @@ while true; do
   # which left a long tail of box characters running past the text. So the status
   # line is built as a plain twin first and measured, and the rule is cut to that
   # width. ${#...} on the coloured version would count escape bytes as characters.
-  keyhint='[+ slower  - faster  v m w e  d s  p pause  h help  q quit]'
+  printf -v keyhint '[+ slower  - faster  v m w e  l history:%s  d s  p pause  h help  q quit]' \
+    "$EVENT_MAX"
   stamp=$(date '+%Y-%m-%d %H:%M:%S')
   printf -v line2_plain '  %s   every %ss   %s%s' "$stamp" "$INTERVAL" "$keyhint" "$off_plain"
 
@@ -1063,7 +1086,7 @@ while true; do
   maybe_auto_scan
 
   if [ "$SHOW_EVENTS" = "1" ] && [ "${#EVENTS[@]}" -gt 0 ]; then
-    emit '  %sEVENTS%s\n' "$C_HDR" "$C_RST"
+    emit '  %sEVENTS%s %s(last %s)%s\n' "$C_HDR" "$C_RST" "$C_DIM" "$EVENT_MAX" "$C_RST"
     for ev in "${EVENTS[@]}"; do
       ts="${ev%%|*}"; rest="${ev#*|}"; col="${rest%%|*}"; txt="${rest#*|}"
       emit '    %s%s%s %s%s%s\n' "$C_DIM" "$ts" "$C_RST" "$col" "$txt" "$C_RST"
@@ -1109,6 +1132,7 @@ while true; do
     m|M)  SHOW_MODELS=$((1-SHOW_MODELS)); save_config ;;
     w|W)  SHOW_WARN=$((1-SHOW_WARN)); save_config ;;
     e|E)  SHOW_EVENTS=$((1-SHOW_EVENTS)); save_config ;;
+    l|L)  cycle_event_max ;;
     p|P)  PAUSED=$((1-PAUSED)) ;;
     h|H|\?) SHOW_HELP=$((1-SHOW_HELP)) ;;
     t|T)  # cycle to the next theme and repaint on the next frame
