@@ -74,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.43"
+VERSION="0.0.44"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -786,6 +786,10 @@ foreign_resident() {  # foreign_resident <host> <model>
     2>/dev/null || printf '(unreadable /api/ps)'
 }
 
+# Hosts that produced a RESULT in THIS process. --probe-vram decides its exit status from
+# this, never from VRAM_SOURCE, which also holds whatever a previous run left in the cache.
+PROBED_NOW=""
+
 probe_host() {
   local host="$1" base="http://$1:$PORT"
   local ps n
@@ -882,6 +886,7 @@ probe_host() {
     local why="stopped at the model's context limit"
     [ "$capped" = "1" ] && why="the GPU refused more of this model"
     plog "RESULT $host $(printf '%.2f' "$best") probed"
+    PROBED_NOW+="$host "
     plog "  ($why)"
     # Persist from the worker as well, so a standalone --probe-worker run is not lost
     # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
@@ -1015,14 +1020,12 @@ if [ "$PROBE_WORKER" = "1" ]; then probe_worker; exit 0; fi
 # --probe-vram: same scan, in the foreground, so it is usable from a script or a
 # terminal without the TUI. Exits non-zero when no ceiling could be established --
 # every host busy, no model would fit, or another scan already holds the lock -- so a
-# caller can tell. The refusal has to short-circuit: falling through to the loop below
-# would inspect ceilings that load_vram_cache had read from a PREVIOUS run and report
-# success for a scan that never happened.
+# caller can tell. Success is judged only by results produced in this process: checking
+# VRAM_SOURCE instead, as an earlier version did, read ceilings that load_vram_cache had
+# picked up from a PREVIOUS run, and reported success for a host this run had skipped.
 if [ "$PROBE_CLI" = "1" ]; then
   probe_worker || exit 1
-  for h in $HOSTS; do
-    [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && exit 0
-  done
+  [ -n "$PROBED_NOW" ] && exit 0
   echo "no ceiling established (hosts busy, or no model fits)" >&2
   exit 1
 fi
