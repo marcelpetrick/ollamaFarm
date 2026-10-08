@@ -48,13 +48,20 @@ too (see "Do not overclaim").
    (`hidden: models:off(m)`), so a toggle saved months ago can never leave someone
    staring at a screen that merely *looks* broken.
 
-6. **Three colour themes, and colour is a data type here.** `dark` deliberately stays
+6. **Five colour themes, and colour is a data type here.** `dark` deliberately stays
    8-colour ANSI so it inherits *your* palette and still works over serial, in a VM
    console, under `TERM=linux`. `vivid` is a loud 256-colour look. `light` avoids yellow
    entirely, because yellow on white is unreadable. Colour is assigned **by role, never
    at the call site**: green is healthy, yellow is about to change, red is costing you
-   throughput *right now* — in every theme. A theme can repaint a meaning; it cannot
-   repurpose one. `NO_COLOR` is honoured.
+   throughput *right now*. A theme can repaint a meaning; it cannot repurpose one — and
+   two themes prove it by keeping the meanings in other colours. `cga` has only cyan,
+   magenta and white, so healthy is cyan, a warning is underlined white, bad is pink.
+   `colorblind` drops the green/red pair that red-green colour blindness merges, for
+   Okabe–Ito blue / yellow / vermillion. Good beat: the palettes were chosen by
+   *measuring* them — CIEDE2000 distances, with a simulated deuteranopia/protanopia
+   check — and the measurement caught a real flaw in an existing theme: `light` drew
+   figures in an orange 9.4 from its warning amber, so a latency figure looked like a
+   warning. `NO_COLOR` is honoured.
 
 7. **A VRAM bar needs a denominator, and Ollama does not have one.** Every plausible
    endpoint was probed on a live server: `/api/ps` gives per-model `size` and
