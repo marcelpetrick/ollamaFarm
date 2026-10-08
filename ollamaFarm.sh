@@ -74,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.46"
+VERSION="0.0.47"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -179,6 +179,11 @@ while [ $# -gt 0 ]; do
       # Accept a raw seconds value by snapping to the nearest ladder rung, so the
       # flag and the +/- keys can never disagree about the current interval.
       [ $# -ge 2 ] || { echo "-n needs a value" >&2; exit 2; }
+      # Validated first: awk reads a non-number as 0, so "-n abc" used to snap silently
+      # to 0.25 s -- the fastest rate, and the wrong direction to fail in against a
+      # shared server.
+      [[ "$2" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] \
+        || { echo "-n needs a number of seconds: $2" >&2; exit 2; }
       local_best=0; local_bestd=""
       for i in "${!INTERVALS[@]}"; do
         d=$(awk -v a="${INTERVALS[$i]}" -v b="$2" 'BEGIN{d=a-b; print (d<0?-d:d)}')

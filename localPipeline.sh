@@ -281,6 +281,7 @@ stage_help_and_args() {
   "$SCRIPT" --definitely-not-a-flag >/dev/null 2>&1; [ "$?" -eq 2 ] || problems+="bad-flag-not-2 "
   "$SCRIPT" -p abc >/dev/null 2>&1;                  [ "$?" -eq 2 ] || problems+="bad-port-not-2 "
   "$SCRIPT" -n >/dev/null 2>&1;                      [ "$?" -eq 2 ] || problems+="missing-value-not-2 "
+  "$SCRIPT" -n abc >/dev/null 2>&1;                  [ "$?" -eq 2 ] || problems+="bad-interval-not-2 "
 
   if [ -n "$problems" ]; then
     mark_result "7 Help & arguments" FAIL "${problems% }"
