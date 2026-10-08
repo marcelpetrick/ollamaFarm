@@ -150,26 +150,29 @@ Frames are assembled into a string with `printf -v` for the same reason.
 
 ### The ceiling resolver
 
-The denominator of the VRAM bar comes from three sources. Which one is used, and how the
-figure is labelled, is the most carefully guarded decision in the tool.
+The denominator of the VRAM bar comes from three sources. Every one of them is a
+footprint that was demonstrated to fit, so the largest wins and every figure carries a
+`+`. How the figure is labelled is the most carefully guarded decision in the tool.
 
 ```mermaid
 flowchart TB
-  q{"host in<br/>VRAM_TOTAL?"}
-  exact["<b>exact</b> — 40.4 GB<br/><i>a figure someone measured<br/>and stands behind</i>"]
-  q2{"a stored<br/>ceiling?"}
-  lower["<b>probed / learned</b> — 12.2+ GB<br/><i>a LOWER BOUND.<br/>The '+' is load-bearing</i>"]
+  floor["<b>VRAM_FLOOR</b><br/><i>demonstrated by hand</i>"]
+  probed["<b>probed</b><br/><i>the scan's best fit</i>"]
+  learned["<b>learned</b><br/><i>largest fully-resident<br/>total observed</i>"]
+  q{"any of them<br/>known?"}
+  lower["<b>the largest</b> — 40.4+ GB<br/><i>a LOWER BOUND.<br/>The '+' is load-bearing</i>"]
   none["<b>unknown</b> — 0.0 GB/?<br/><i>no bar at all, rather<br/>than a guessed one</i>"]
 
-  q -->|yes| exact
-  q -->|no| q2
-  q2 -->|yes| lower
-  q2 -->|no| none
+  floor --> q
+  probed --> q
+  learned --> q
+  q -->|yes| lower
+  q -->|no| none
 
-  classDef good fill:#2d7d46,stroke:#1c5130,color:#fff
+  classDef src fill:#4a89c7,stroke:#2d5a8a,color:#fff
   classDef warnc fill:#b8860b,stroke:#7a5a08,color:#fff
   classDef nonec fill:#777,stroke:#4a4a4a,color:#fff
-  class exact good
+  class floor,probed,learned src
   class lower warnc
   class none nonec
 ```

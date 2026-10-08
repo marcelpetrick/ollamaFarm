@@ -67,14 +67,14 @@
 # and raising num_ctx until the card refuses. That writes to the server, so automatic
 # and manual scans both run against IDLE hosts only and never evict anything;
 # --no-auto-scan disables the automatic bootstrap.
-# Known ceilings are listed in VRAM_TOTAL below; a host with neither a table entry nor
-# a scan shows "?" and gets no bar rather than a guessed one.
+# Ceilings already demonstrated by hand are listed in VRAM_FLOOR below; a host with
+# neither a table entry nor a scan shows "?" and gets no bar rather than a guessed one.
 
 set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.45"
+VERSION="0.0.46"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -103,8 +103,8 @@ EVENT_MAX=10               # number of state changes retained; cycled with "l"
 PAUSED=0
 SHOW_HELP=0
 
-# Measured usable VRAM ceilings (see README.md). Used only to draw bars.
-# Absent host => "?" and no bar; nothing here is inferred.
+# VRAM footprints demonstrated fully resident by hand (see README.md). Used only to draw
+# bars. Absent host => "?" and no bar; nothing here is inferred.
 #
 # 0.0.32: both figures re-established with the layer count pinned (num_gpu 999), which
 # reaches far closer to the edge of the card than letting Ollama choose the split -- see
@@ -112,10 +112,13 @@ SHOW_HELP=0
 # fully resident there; the old figure was where Ollama's own caution stopped, not where
 # the hardware did.
 #
-# These are still the largest footprints anyone has DEMONSTRATED, not hardware totals,
-# and on a multi-GPU box the reachable figure varies by model (see ceiling_for). Use the
-# best demonstrated value: it is the only one that draws real headroom on the bar.
-declare -A VRAM_TOTAL=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
+# These are the largest footprints anyone has DEMONSTRATED, not hardware totals, and on a
+# multi-GPU box the reachable figure varies by model. So they are floors exactly like a
+# scanned figure, and are drawn with the same "+". This table was called VRAM_TOTAL and
+# shown without the "+" until 0.0.46, which claimed a certainty no entry in it had, and
+# which also hid any larger figure observed later: the table always won, so the bar
+# pinned at red instead of showing the demonstrated headroom.
+declare -A VRAM_FLOOR=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ollamafarm"
 CFG="$CFG_DIR/config"
@@ -341,12 +344,12 @@ bar() {  # bar <used> <total> <width>
 }
 
 # ------------------------------------------------------ VRAM ceilings ---------
-# Three sources, in descending order of trust:
-#   exact   - the VRAM_TOTAL table, or a user override; a figure someone stands behind
+# Three sources, all of them LOWER BOUNDS, never totals, and all shown with a "+":
+#   floor   - the VRAM_FLOOR table: a footprint demonstrated fully resident by hand
 #   probed  - found by the "s" scan: the largest footprint that stayed fully resident
 #   learned - observed passively: the largest fully-resident total ever seen
 #
-# probed and learned are both LOWER BOUNDS, never totals, and are shown with a "+".
+# Since every one of them says "at least this much fits", the largest one wins.
 #
 # An out-of-memory refusal during a scan does NOT lift a figure out of that category,
 # which is the one thing this comment exists to say. It is tempting -- the card said no,
@@ -430,12 +433,14 @@ note_resident_total() {  # note_resident_total <host> <gb> <any_split:0|1>
   fi
 }
 
-# Echoes "<gb> exact" | "<gb> lower" | "" (unknown)
+# Echoes the best demonstrated floor in GB, or nothing when the host has none.
 ceiling_for() {
-  local host="$1"
-  if [ -n "${VRAM_TOTAL[$host]:-}" ]; then printf '%s exact' "${VRAM_TOTAL[$host]}"; return; fi
-  if [ -n "${VRAM_LEARNED[$host]:-}" ]; then printf '%s lower' "${VRAM_LEARNED[$host]}"; return; fi
-  printf ''
+  local host="$1" floor="${VRAM_FLOOR[$1]:-}" seen="${VRAM_LEARNED[$1]:-}"
+  if [ -n "$floor" ] && { [ -z "$seen" ] || ! fgt "$seen" "$floor"; }; then
+    printf '%s' "$floor"
+  else
+    printf '%s' "$seen"
+  fi
 }
 
 load_vram_cache
@@ -581,19 +586,15 @@ render_host() {
   [[ "$any_split" =~ ^[01]$ ]] || any_split=1
   [ "$n" -gt 0 ] && note_resident_total "$host" "$used" "$any_split"
 
-  local total kind
-  read -r total kind <<<"$(ceiling_for "$host")"
-  total="${total:-}"; kind="${kind:-}"
+  local total
+  total=$(ceiling_for "$host")
 
   emit '  %s%-16s%s %sollama %-7s%s ' "$C_HOST" "$host" "$C_RST" "$C_LBL" "$ver" "$C_RST"
   if [ -n "$total" ]; then
     [ "$SHOW_BARS" = "1" ] && emit '%s ' "$(bar "$used" "$total" 22)"
-    if [ "$kind" = "lower" ]; then
-      # "+" marks a lower bound: at least this much fits, the true ceiling may be more
-      emit '%s%5.1f%s/%s%s+%s GB ' "$C_FIG" "$used" "$C_RST" "$C_LBL" "$total" "$C_RST"
-    else
-      emit '%s%5.1f%s/%s GB ' "$C_FIG" "$used" "$C_RST" "$total"
-    fi
+    # "+" marks a lower bound: at least this much fits, the true ceiling may be more.
+    # Every source is one, so every figure carries it.
+    emit '%s%5.1f%s/%s%s+%s GB ' "$C_FIG" "$used" "$C_RST" "$C_LBL" "$total" "$C_RST"
   else
     emit '%s%5.1f GB%s/%s?%s ' "$C_FIG" "$used" "$C_RST" "$C_DIM" "$C_RST"
   fi
@@ -979,8 +980,8 @@ start_probe() {  # start_probe [host ...]   (defaults to every known host)
 # waiting for someone to press "s".
 #
 # Only for hosts that are idle (so nothing is ever evicted) and whose ceiling is either
-# unknown or merely "learned". An exact table figure or an earlier probe is trusted and
-# left alone, and each host is attempted once per session so a failure cannot loop.
+# unknown or merely "learned". A hand-demonstrated table figure or an earlier probe is
+# left alone -- re-measuring it would mean writing to the server for little gain -- and each host is attempted once per session so a failure cannot loop.
 declare -A AUTO_TRIED=()
 maybe_auto_scan() {
   [ "$AUTO_SCAN" = "1" ] || return 0
@@ -988,7 +989,7 @@ maybe_auto_scan() {
   local h cand=""
   for h in $HOSTS; do
     [ -n "${AUTO_TRIED[$h]:-}" ] && continue
-    [ -n "${VRAM_TOTAL[$h]:-}" ] && continue                  # exact figure, trusted
+    [ -n "${VRAM_FLOOR[$h]:-}" ] && continue                  # demonstrated by hand
     [ "${VRAM_SOURCE[$h]:-}" = "probed" ] && continue          # already scanned
     [ -n "${PREV_MODELS[$h]:-}" ] && continue                 # busy: never evict
     [ -z "${HOST_SEEN[$h]:-}" ] && continue                   # not reached yet

@@ -59,7 +59,8 @@ v0.0.36.</sub>
 
 ## At runtime
 
-Real output, two servers busy, 104-column terminal:
+Real output, two servers busy, 104-column terminal. Captured from v0.0.37, which predates
+the `l` and `s` key hints and drew a hand-demonstrated ceiling without its `+`:
 
 ```
 ┌─ Ollama farm 0.0.37 ───────────────────────────────────────────────────────────────────────┐
@@ -85,10 +86,10 @@ edge — see [VRAM ceilings](#vram-ceilings).
 <summary>The same view with things going wrong (fabricated, to show the alarm states together)</summary>
 
 ```
-┌─ Ollama farm 0.0.40 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
+┌─ Ollama farm 0.0.46 ──────────────────────────────────────────────────   PAUSED — press p to resume ┐
   2026-08-13 03:04:59   every 5s   [+ slower  - faster  v m w e  l history:10  d s  p pause  h help  q quit]
 
-  192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1 GB  1840ms
+  192.168.100.13   ollama 0.32.5  ██████████████████████  35.9/36.1+ GB 1840ms
       hoarder-70b:q8_0                69.9B Q8_0    31.40/35.80 GB ctx 4096    ttl 12s   ⚠ SPLIT→CPU (5.3x slower)
         ↳ presence_penalty=1.5 (~35% slower — bake 0); no baked num_ctx (16k cap via /v1/messages, tool calls die past it)
       tiny-yolk:0.5b                   0.5B Q4_0     0.41/0.41  GB ctx 2048    ttl 4m2s
@@ -178,10 +179,11 @@ something a monitor should do unasked); and whether an address is public or priv
 irrelevant, only its numeric range matters. A loopback-only server is therefore never
 auto-discovered — use `-H 127.0.0.1`.
 
-To give a host a known VRAM ceiling, add it to `VRAM_TOTAL` near the top of the script:
+To seed a host with a footprint you have already demonstrated fully resident, add it to
+`VRAM_FLOOR` near the top of the script. Such a host is not auto-scanned:
 
 ```bash
-declare -A VRAM_TOTAL=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
+declare -A VRAM_FLOOR=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 ```
 
 ---
@@ -238,12 +240,14 @@ total-VRAM field on any endpoint. Three sources are used instead:
 
 | shown as | source | meaning |
 |---|---|---|
-| `33.1/40.4 GB` | the `VRAM_TOTAL` table | a figure someone measured and stands behind |
-| `0.0/7.77+ GB` | **probed** or **learned** | *at least* this much fits — a lower bound |
+| `33.1/40.4+ GB` | the `VRAM_FLOOR` table, a **probe**, or **learned** | *at least* this much fits — a lower bound |
 | `0.0 GB/?` | nothing known | no bar drawn, rather than a guessed one |
 
-The **`+` is load-bearing.** A bar that silently meant either "this is the capacity" or
-"it is at least this much" would be worse than no bar.
+Every source is a footprint that was *demonstrated* to fit, so every figure is a lower
+bound, and the largest one available is drawn. The **`+` is load-bearing.** A bar that
+silently meant either "this is the capacity" or "it is at least this much" would be worse
+than no bar. Until 0.0.46 the hand-entered table was shown without the `+`, and always won
+over a larger observation; both were wrong for the same reason.
 
 **Learned** costs nothing: `/api/ps` is already polled every frame, so the largest total
 ever seen *fully resident* is recorded. **Scanning** gets a far tighter figure, and is
@@ -500,7 +504,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.45 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.46 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

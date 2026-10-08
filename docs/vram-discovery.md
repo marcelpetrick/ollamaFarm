@@ -1,7 +1,7 @@
 # Plan: discovering usable VRAM
 
-Currently `VRAM_TOTAL` is a hardcoded table, and a host that is not in it shows `?`
-with no bar. This is the investigation into whether that can be automated, what is
+When this was written, `VRAM_TOTAL` (now `VRAM_FLOOR`) was a hardcoded table, and a
+host that was not in it showed `?` with no bar. This is the investigation into whether that can be automated, what is
 actually possible through the API, and a plan for what to build.
 
 Everything below was probed against live servers, not inferred from documentation.
@@ -191,8 +191,9 @@ and costs them a 70-second reload, which is not something a monitor may do on it
 
 Not built. Typing a figure by hand is redundant now that an idle host bootstraps its
 own ceiling automatically and `--probe-vram` can be re-run at any time, and a
-hand-entered number is the one value nothing can verify. `VRAM_TOTAL` in the script
-remains for figures someone has measured and stands behind.
+hand-entered number is the one value nothing can verify. The table in the script,
+renamed `VRAM_FLOOR` in 0.0.46, remains for footprints demonstrated by hand, and since
+0.0.46 it is drawn with a `+` like every other source.
 
 ### Phase 3 — active scan, implemented as the `s` key
 
@@ -249,7 +250,7 @@ Measured end to end on the 12 GB host: **103 s**, seven rejections at ~8 s each,
 `2048 → 21504 → 31232-OOM → 26368 → 28800-OOM`, result **12.20+ GB**. On the dual-GPU
 host the same scan took ~3 min and returned **34.69+ GB**, while a hand-run scan on a
 better-dividing model reached **40.47 GB** — the model-dependence described above, and
-the reason `VRAM_TOTAL` carries the larger, demonstrated figure.
+the reason `VRAM_FLOOR` carries the larger, demonstrated figure.
 
 ### What will not be built
 
