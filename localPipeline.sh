@@ -259,6 +259,18 @@ stage_doc_agreement() {
     grep -qF "$k" "$SCRIPT" || problems+="cfg:$k(script) "
   done
 
+  # The minimum versions the script enforces must be the ones the README and its badges
+  # advertise; both are read from the refusal messages, so a raised floor cannot leave a
+  # stale badge behind.
+  local min_bash min_jq
+  min_bash=$(grep -oP 'needs bash \K[0-9]+\.[0-9]+(?= or newer)' "$SCRIPT")
+  min_jq=$(grep -oP '"jq \K[0-9]+\.[0-9]+(?= or newer is required)' "$SCRIPT")
+  [ -n "$min_bash" ] && [ -n "$min_jq" ] || problems+="min-versions-not-found "
+  [[ "$readme_text" == *"bash $min_bash+"* && "$readme_text" == *"badge/bash-$min_bash%2B"* ]] \
+    || problems+="bash-floor-not-in-README($min_bash) "
+  [[ "$readme_text" == *"jq $min_jq+"* && "$readme_text" == *"badge/jq-$min_jq%2B"* ]] \
+    || problems+="jq-floor-not-in-README($min_jq) "
+
   # Every theme the script offers must have a row in the README's theme table.
   local themes t
   themes=$(grep -oP '(?<=^THEMES=\().*(?=\))' "$SCRIPT")

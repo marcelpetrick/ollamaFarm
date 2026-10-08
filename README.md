@@ -7,8 +7,12 @@ of `htop` and `btop`, for LLM boxes instead of CPUs.
 [![Quality](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/quality.yml)
 [![Release](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/release.yml/badge.svg)](https://github.com/marcelpetrick/ollamaFarm/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/marcelpetrick/ollamaFarm?sort=semver)](https://github.com/marcelpetrick/ollamaFarm/releases/latest)
-[![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
 [![license: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue)](LICENSE)
+[![bash 4.0+](https://img.shields.io/badge/bash-4.0%2B-4EAA25)](https://www.gnu.org/software/bash/)
+[![jq 1.5+](https://img.shields.io/badge/jq-1.5%2B-5a5a5a)](https://jqlang.org/)
+[![shellcheck: clean](https://img.shields.io/badge/shellcheck-clean-brightgreen)](localPipeline.sh)
+[![platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624)](#command-line)
+[![Ollama HTTP API](https://img.shields.io/badge/Ollama-HTTP%20API-000000)](https://github.com/ollama/ollama/blob/main/docs/api.md)
 
 One file, no runtime, no daemon, no agent on the servers: bash, `curl`, `jq`, `awk` and a
 terminal.
@@ -524,7 +528,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.55 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.56 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

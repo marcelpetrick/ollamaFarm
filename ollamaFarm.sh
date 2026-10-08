@@ -83,7 +83,7 @@ fi
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.55"
+VERSION="0.0.56"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
