@@ -66,6 +66,7 @@ DOCAGREE_OK=0
 HELP_OK=0
 ROBUST_OK=0
 RENDER_OK=0
+LIVE_OK=1                  # stage 10 may skip, but a scan it started is a hard failure
 
 C_RST=$'\e[0m'; C_B=$'\e[1m'; C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_RED=$'\e[31m'
 [ -t 1 ] || { C_RST=""; C_B=""; C_GRN=""; C_YEL=""; C_RED=""; }
@@ -105,6 +106,25 @@ print_summary() {
 # All shell scripts in the repo, so a new one is covered without editing this file.
 shell_scripts() {
   find "$ROOT_DIR" -maxdepth 1 -name '*.sh' -type f | sort
+}
+
+# Run the monitor the way every smoke stage must: with a throwaway config directory and
+# --no-auto-scan. Without both, a smoke run against an idle server -- a developer's own
+# Ollama on 127.0.0.1, or a host passed with --host -- bootstrapped a detached VRAM scan
+# that loads models on that server and outlives the pipeline, and the run rewrote the
+# developer's real settings on exit. The pipeline must stay read-only.
+# Prints the output; leaves the config directory in $SMOKE_CFG for the caller to inspect.
+SMOKE_CFG=""
+run_smoke() {  # run_smoke <timeout-seconds> <args...>
+  local secs="$1"; shift
+  SMOKE_CFG=$(mktemp -d) || return 1
+  XDG_CONFIG_HOME="$SMOKE_CFG" timeout "$secs" "$SCRIPT" --no-auto-scan "$@" </dev/null 2>&1
+}
+
+# A scan leaves probe.lock or probe.log behind; either means the smoke run wrote to a
+# server, which is a failure regardless of what was rendered.
+smoke_started_scan() {
+  [ -e "$SMOKE_CFG/ollamafarm/probe.lock" ] || [ -e "$SMOKE_CFG/ollamafarm/probe.log" ]
 }
 
 stage_tooling() {
@@ -287,7 +307,7 @@ stage_robustness() {
   } > "$tmp_cfg/ollamafarm/config"
 
   local out
-  out=$(XDG_CONFIG_HOME="$tmp_cfg" timeout 6 "$SCRIPT" -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
+  out=$(XDG_CONFIG_HOME="$tmp_cfg" timeout 6 "$SCRIPT" --no-auto-scan -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
   printf '%s\n' "$out" > "$REPORT_DIR/robustness.txt"
 
   [ -e "$canary" ] || [ -e "$canary.bt" ] && problems+="config-injection "
@@ -298,7 +318,7 @@ stage_robustness() {
   # A valid persisted history limit must reach the rendered UI. This exercises the
   # real config loader rather than merely checking that the key exists in the file.
   printf 'event_max=20\n' > "$tmp_cfg/ollamafarm/config"
-  out=$(XDG_CONFIG_HOME="$tmp_cfg" timeout 6 "$SCRIPT" -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
+  out=$(XDG_CONFIG_HOME="$tmp_cfg" timeout 6 "$SCRIPT" --no-auto-scan -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
   printf '%s' "$out" | grep -q "history:20" || problems+="event-max-not-loaded "
 
   rm -rf "$tmp_cfg"
@@ -311,11 +331,19 @@ stage_robustness() {
 }
 
 stage_render_offline() {
-  # 127.0.0.1 almost certainly has no Ollama, which is the point: the monitor must
-  # still paint a frame and report the host as unreachable rather than hang or die.
-  local out
-  out=$(timeout 8 "$SCRIPT" -n 1 -H 127.0.0.1 --no-color </dev/null 2>&1)
+  # Usually nothing answers on 127.0.0.1, and then the monitor must still paint a frame
+  # and report the host as unreachable rather than hang or die. A developer may well run
+  # Ollama locally, though, so the frame may instead show a live host -- which is why
+  # this goes through run_smoke and must never start a scan.
+  local out scanned=0
+  out=$(run_smoke 8 -n 1 -H 127.0.0.1 --no-color)
   printf '%s\n' "$out" > "$REPORT_DIR/render.txt"
+  smoke_started_scan && scanned=1
+  rm -rf "$SMOKE_CFG"
+  if [ "$scanned" = 1 ]; then
+    mark_result "9 Render smoke test" FAIL "the smoke run started a VRAM scan"
+    return 1
+  fi
   if ! printf '%s' "$out" | grep -q "Ollama farm"; then
     mark_result "9 Render smoke test" FAIL "no frame produced (see render.txt)"
     return 1
@@ -348,9 +376,15 @@ stage_live() {
     mark_result "10 Live smoke test" SKIP "no Ollama host answered (${hosts// /, })"
     return 0
   fi
-  local out
-  out=$(timeout 10 "$SCRIPT" -n 1 -H "$found" --no-color </dev/null 2>&1)
+  local out scanned=0
+  out=$(run_smoke 10 -n 1 -H "$found" --no-color)
   printf '%s\n' "$out" > "$REPORT_DIR/live.txt"
+  smoke_started_scan && scanned=1
+  rm -rf "$SMOKE_CFG"
+  if [ "$scanned" = 1 ]; then
+    mark_result "10 Live smoke test" FAIL "the smoke run started a VRAM scan on $found"
+    return 1
+  fi
   if printf '%s' "$out" | grep -qE "ollama [0-9]+\.[0-9]+"; then
     mark_result "10 Live smoke test" PASS "queried $found and read its version"
   else
@@ -393,12 +427,13 @@ main() {
   log "7/10 help & arguments";   stage_help_and_args      && HELP_OK=1
   log "8/10 robustness";         stage_robustness         && ROBUST_OK=1
   log "9/10 render smoke test";  stage_render_offline     && RENDER_OK=1
-  log "10/10 live smoke test";   stage_live
+  log "10/10 live smoke test";   stage_live               || LIVE_OK=0
 
   local exit_code=1
   if [ "$TOOLING_OK" -eq 1 ] && [ "$SYNTAX_OK" -eq 1 ] && [ "$SHELLCHECK_OK" -eq 1 ] \
      && [ "$EXECBIT_OK" -eq 1 ] && [ "$DOCS_OK" -eq 1 ] && [ "$DOCAGREE_OK" -eq 1 ] \
-     && [ "$HELP_OK" -eq 1 ] && [ "$ROBUST_OK" -eq 1 ] && [ "$RENDER_OK" -eq 1 ]; then
+     && [ "$HELP_OK" -eq 1 ] && [ "$ROBUST_OK" -eq 1 ] && [ "$RENDER_OK" -eq 1 ] \
+     && [ "$LIVE_OK" -eq 1 ]; then
     exit_code=0
   fi
 
