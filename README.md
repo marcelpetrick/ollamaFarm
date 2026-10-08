@@ -359,8 +359,9 @@ against it:
 ./ollamaFarm.sh --probe-vram 10.0.0.5 || echo "host busy, try later"
 ```
 
-A scanned value is never overwritten by a smaller passive observation. A *larger* one
-does replace it, and that is expected rather than alarming: the scan reached only as far
+A stored value is never lowered — not by a smaller passive observation, and not by a
+later scan that happened to pick a less favourable model. A *larger* one does replace it,
+and that is expected rather than alarming: the scan reached only as far
 as one model could take it, and real traffic may run a model that divides across the
 cards better. Both are lower bounds, so the larger simply wins.
 
@@ -499,7 +500,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.44 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.45 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

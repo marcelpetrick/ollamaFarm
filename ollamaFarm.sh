@@ -74,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.44"
+VERSION="0.0.45"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -366,6 +366,19 @@ bar() {  # bar <used> <total> <width>
 declare -A VRAM_LEARNED=()
 declare -A VRAM_SOURCE=()
 
+# Fold one ceiling into memory. Both kinds are lower bounds, so the larger figure wins
+# and a smaller one never replaces it -- not even a fresh scan, which only reaches as far
+# as the model it happened to pick. "probed" is sticky: it records that the host HAS been
+# scanned, so auto-scan does not repeat it, whichever observation supplied the number.
+merge_ceiling() {  # merge_ceiling <host> <gb> <probed|learned>
+  local host="$1" gb="$2" src="$3"
+  if [ -z "${VRAM_LEARNED[$host]:-}" ] || fgt "$gb" "${VRAM_LEARNED[$host]}"; then
+    VRAM_LEARNED[$host]="$gb"
+  fi
+  [ "$src" = "probed" ] && VRAM_SOURCE[$host]=probed
+  [ -n "${VRAM_SOURCE[$host]:-}" ] || VRAM_SOURCE[$host]=learned
+}
+
 load_vram_cache() {
   [ -r "$CACHE_VRAM" ] || return 0
   local h g src ts
@@ -373,19 +386,26 @@ load_vram_cache() {
     [ -n "$h" ] || continue
     [[ "$g" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
     case "$src" in probed|learned) ;; *) continue ;; esac
-    VRAM_LEARNED[$h]="$g"; VRAM_SOURCE[$h]="$src"
+    merge_ceiling "$h" "$g" "$src"
   done < "$CACHE_VRAM"
 }
 
+# Several processes write this file: the TUI, its detached worker, a --probe-vram run,
+# a second TUI. Each used to rewrite it from its own memory, so whoever saved last
+# erased every entry the others had added since it started -- measured: a TUI's learned
+# ceiling vanished when a concurrent --probe-vram finished. Re-reading and merging just
+# before the write shrinks that to the gap between one read and one rename, and the
+# per-process temp name stops two writers from interleaving inside one file.
 save_vram_cache() {
   mkdir -p "$CFG_DIR" 2>/dev/null || return 0
-  local h
-  : > "$CACHE_VRAM.tmp" 2>/dev/null || return 0
+  load_vram_cache
+  local h tmp="$CACHE_VRAM.tmp.$$"
+  : > "$tmp" 2>/dev/null || return 0
   for h in "${!VRAM_LEARNED[@]}"; do
     printf '%s\t%s\t%s\t%s\n' "$h" "${VRAM_LEARNED[$h]}" "${VRAM_SOURCE[$h]:-learned}" "$(date +%s)" \
-      >> "$CACHE_VRAM.tmp"
+      >> "$tmp"
   done
-  mv -f "$CACHE_VRAM.tmp" "$CACHE_VRAM" 2>/dev/null
+  mv -f "$tmp" "$CACHE_VRAM" 2>/dev/null || rm -f "$tmp"
 }
 
 # Passive learning, free: /api/ps is already polled every frame. Only a total that
@@ -891,7 +911,7 @@ probe_host() {
     # Persist from the worker as well, so a standalone --probe-worker run is not lost
     # if no UI is watching. Read-modify-write, so a concurrently learned entry for a
     # different host survives.
-    VRAM_LEARNED[$host]="$(printf '%.2f' "$best")"; VRAM_SOURCE[$host]=probed
+    merge_ceiling "$host" "$(printf '%.2f' "$best")" probed
     save_vram_cache
   else
     plog "SKIP $host — could not place any model fully in VRAM"
@@ -993,6 +1013,11 @@ PROBE_OFFSET=0
 drain_probe_log() {
   [ -r "$PROBE_LOG" ] || return 0
   local size; size=$(wc -c < "$PROBE_LOG" 2>/dev/null) || return 0
+  # Every scan truncates the log when it starts. A scan started by ANOTHER process (a
+  # --probe-vram in a second terminal) does so behind this one's back, and the offset
+  # then points past the end of the new log: its lines, RESULT included, were silently
+  # skipped until the file grew past the old size. A shrunk file means a new log.
+  [ "$size" -lt "$PROBE_OFFSET" ] && PROBE_OFFSET=0
   [ "$size" -le "$PROBE_OFFSET" ] && return 0
   local line result_host result_g
   while IFS= read -r line; do
@@ -1000,8 +1025,7 @@ drain_probe_log() {
     case "$line" in
       RESULT*) read -r _ result_host result_g _ <<< "$line"
                if [ -n "$result_host" ] && [[ "$result_g" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-                 VRAM_LEARNED[$result_host]="$result_g"
-                 VRAM_SOURCE[$result_host]=probed
+                 merge_ceiling "$result_host" "$result_g" probed
                  save_vram_cache
                  event "$C_GRN" "$result_host: ceiling at least $result_g GB (probed)"
                else
