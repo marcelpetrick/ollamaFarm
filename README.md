@@ -10,7 +10,7 @@ of `htop` and `btop`, for LLM boxes instead of CPUs.
 [![shell: bash](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
 [![license: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue)](LICENSE)
 
-One file, no runtime, no daemon, no agent on the servers: `curl` + `jq` + `awk` and a
+One file, no runtime, no daemon, no agent on the servers: bash, `curl`, `jq`, `awk` and a
 terminal.
 
 [![ollamaFarm screen recording preview](media/showcase_preview.gif)](media/showcase.webm)
@@ -157,7 +157,10 @@ saved in an earlier session cannot leave you staring at a screen that looks brok
 ./ollamaFarm.sh --help
 ```
 
-Requires `curl`, `jq`, `awk`. Checked at startup.
+Requires **bash 4.0+**, **jq 1.5+**, GNU `date` (coreutils), `curl` and `awk`; scanning
+also needs `setsid` and `nohup`. All checked at startup, and these are minimums for
+features the script actually uses, not pins. bash 3.2 (macOS's `/bin/bash`), jq 1.4 and
+busybox `date` are refused with a message; bash 4.0.44 with jq 1.5 was tested end to end.
 
 ---
 
@@ -504,7 +507,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.49 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.50 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

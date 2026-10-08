@@ -281,6 +281,16 @@ bad_input_rc() {  # bad_input_rc <args...>  -> the script's exit status
   return "$rc"
 }
 
+# Same isolation, but keeps the output, for checks on what the refusal says.
+bad_input_rc_out() {
+  local cfg rc
+  cfg=$(mktemp -d) || return 1
+  XDG_CONFIG_HOME="$cfg" timeout 5 "$SCRIPT" --no-auto-scan -H 127.0.0.9 "$@" </dev/null 2>&1
+  rc=$?
+  rm -rf "$cfg"
+  return "$rc"
+}
+
 stage_help_and_args() {
   local problems="" out rc
 
@@ -296,6 +306,18 @@ stage_help_and_args() {
   bad_input_rc -p abc;                  [ "$?" -eq 2 ] || problems+="bad-port-not-2 "
   bad_input_rc -n abc;                  [ "$?" -eq 2 ] || problems+="bad-interval-not-2 "
   bad_input_rc -n;                      [ "$?" -eq 2 ] || problems+="missing-value-not-2 "
+
+  # A jq older than 1.5 must be refused up front: under 1.4 the per-model lines vanish
+  # without an error. A shim on PATH reports 1.4 and delegates everything else.
+  local shim
+  shim=$(mktemp -d) && {
+    printf '#!/bin/sh\n[ "$1" = --version ] && { echo jq-1.4; exit 0; }\nexec "%s" "$@"\n' \
+      "$(command -v jq)" > "$shim/jq"
+    chmod +x "$shim/jq"
+    out=$(PATH="$shim:$PATH" bad_input_rc_out -n 1); rc=$?
+    [ "$rc" -eq 1 ] && [[ "$out" == *"jq 1.5 or newer"* ]] || problems+="old-jq-not-refused "
+    rm -rf "$shim"
+  }
 
   if [ -n "$problems" ]; then
     mark_result "7 Help & arguments" FAIL "${problems% }"

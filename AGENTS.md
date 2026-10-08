@@ -218,6 +218,10 @@ force a major bump yet.
 
 - Bash with `set -uo pipefail`. `curl`, `jq`, `awk` only — no new dependencies
   without a strong reason, and check for them at startup if you add one.
+- Minimum versions, checked at startup: bash 4.0, jq 1.5, GNU `date`. They are floors
+  for features in use, not pins. Using a newer feature (bash 4.3 namerefs, jq 1.6
+  functions) raises the floor: update the check, the README and the release notes
+  together, and test the old version for real — `docker run bash:4.0` works here.
 - Comments explain **why**, especially where the code looks odd. Most of the odd
   code here is odd because of a measured constraint; say which one.
 - Colour encodes state, never decoration: green healthy, red costing you throughput

@@ -79,7 +79,7 @@ jobs:
             printf '\n\n## Install\n\n'
             printf 'Download `ollamaFarm.sh`, verify it with `SHA256SUMS`, then run:\n\n'
             printf '```shell\nchmod +x ollamaFarm.sh\n./ollamaFarm.sh --help\n```\n'
-            printf '\nRequires Bash, `curl`, `jq`, and `awk`.\n'
+            printf '\nRequires bash 4.0+, jq 1.5+, GNU date, `curl` and `awk`.\n'
           } > release-notes.md
 
       - name: Tag and publish release

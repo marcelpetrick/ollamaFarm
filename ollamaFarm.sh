@@ -72,9 +72,18 @@
 
 set -uo pipefail
 
+# Bash 4.0 or newer: associative arrays (declare -A) hold every piece of detector and
+# cache state, and "read -t" with a fractional timeout is the frame clock. Bash 3.2, still
+# /bin/bash on macOS, has neither. Checked before anything else runs, so the failure is a
+# sentence rather than an error from deep inside the first frame.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  echo "ollamaFarm.sh needs bash 4.0 or newer; this is bash ${BASH_VERSION:-unknown}" >&2
+  exit 1
+fi
+
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.49"
+VERSION="0.0.50"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
@@ -230,6 +239,27 @@ done
 for dep in curl jq awk; do
   command -v "$dep" >/dev/null || { echo "$dep is required" >&2; exit 1; }
 done
+
+# Minimum versions, for the features actually used -- not a pin. curl and awk have no
+# floor here: nothing newer than their long-standing basics is used.
+#
+# jq 1.5: --argjson, @tsv, first(), any(gen; cond) and endswith() all arrived in 1.5.
+# Measured under 1.4: the per-model query fails, and because a failed query is meant to
+# degrade rather than crash, every model line -- size, context, ttl, the SPLIT warning --
+# silently disappears while the host line still shows the VRAM in use.
+if [[ "$(jq --version 2>/dev/null)" =~ ^jq-([0-9]+)\.([0-9]+) ]] \
+   && { [ "${BASH_REMATCH[1]}" -lt 1 ] \
+        || { [ "${BASH_REMATCH[1]}" -eq 1 ] && [ "${BASH_REMATCH[2]}" -lt 5 ]; }; }; then
+  echo "jq 1.5 or newer is required; found $(jq --version 2>/dev/null)" >&2
+  exit 1
+fi
+# GNU date: latency is timed with %3N and keep-alive expiry is parsed with -d. BSD and
+# busybox date print "%3N" literally or reject -d, which breaks the arithmetic.
+if ! [[ "$(date +%s%3N 2>/dev/null)" =~ ^[0-9]+$ ]] \
+   || ! date -d '2026-01-01T00:00:00Z' +%s >/dev/null 2>&1; then
+  echo "GNU date (coreutils) is required" >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------------ colours ---
 # Colour encodes STATE, never decoration: C_GRN = healthy/resident,
@@ -974,6 +1004,11 @@ start_probe() {  # start_probe [host ...]   (defaults to every known host)
     return 0
   fi
   [ -n "${targets// /}" ] || return 0
+  # Only the scan needs these, so their absence disables scanning, not the monitor.
+  if ! command -v setsid >/dev/null || ! command -v nohup >/dev/null; then
+    event "$C_RED" "cannot scan: setsid and nohup are required to detach the worker"
+    return 0
+  fi
   mkdir -p "$CFG_DIR" 2>/dev/null
   # Through bash explicitly, so a copy without the executable bit still works.
   setsid nohup bash "$SELF" --probe-worker -H "$(echo "$targets" | tr ' ' ',')" -p "$PORT" \
