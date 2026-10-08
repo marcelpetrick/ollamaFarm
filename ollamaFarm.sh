@@ -49,7 +49,7 @@
 #   ./ollamaFarm.sh --probe-vram       # scan every host now, print, exit
 #   ./ollamaFarm.sh --probe-vram HOST  # scan one host now, print, exit
 #   ./ollamaFarm.sh --no-auto-scan     # do not bootstrap unknown VRAM ceilings
-#   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light
+#   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light | cga
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
 #   ./ollamaFarm.sh --version          # print the version and exit
 #
@@ -83,7 +83,7 @@ fi
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.53"
+VERSION="0.0.54"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
@@ -100,8 +100,8 @@ PROBE_CLI=0                # --probe-vram: scan in the foreground, print, exit
 AUTO_SCAN=1                # bootstrap an unknown ceiling automatically, idle hosts only
 WANT_COLOR=auto
 # Colour themes, cycled by the "t" key in this order. "dark" is plain ANSI so it
-# works on any terminal; the other two assume 256-colour support.
-THEMES=(dark vivid light)
+# works on any terminal; the others assume 256-colour support.
+THEMES=(dark vivid light cga)
 THEME=dark
 HOSTS_FROM_ARG=0
 
@@ -266,8 +266,10 @@ fi
 # C_RED = actively costing you performance now, C_YEL = about to change.
 #
 # A theme repaints those slots; it must never repurpose them. Whatever the palette,
-# the green thing is fine and the red thing is costing you throughput -- otherwise
+# the healthy thing is fine and the bad thing is costing you throughput -- otherwise
 # the display stops being readable at a glance, which is the only reason it exists.
+# Most themes paint them green / yellow / red; cga cannot, and keeps the meanings in
+# its own three colours instead.
 #
 # Slots: C_GRN good · C_YEL warning · C_RED bad · C_FIG figures · C_MODEL model names
 #        C_DIM secondary text · C_B emphasis · C_REV inverted badge
@@ -319,6 +321,26 @@ apply_theme() {
       C_HDR=$'\e[1;38;5;23m'    # deep teal — rules and section headings
       C_HOST=$'\e[1;38;5;236m'  # near-black, bold — host identity
       C_LBL=$'\e[38;5;24m'      # dark teal — field labels and units
+      ;;
+    cga)
+      # IBM CGA palette 1, high intensity: cyan, magenta and white on black. There is no
+      # green, yellow or red in it, so the meanings move -- they are never dropped:
+      #   healthy = light cyan, bad = hot pink, about to change = white, bold AND
+      #   underlined, so a warning cannot pass for plain white text.
+      # Everything else uses the palette's dimmer steps: turquoise (CGA's low-intensity
+      # cyan) for structure and figures, a dark magenta for model names, greys for the
+      # rest. Measured as CIEDE2000 on the xterm-256 values: every state colour is at
+      # least 16 from every other slot, and each sits at 7.7:1 contrast or more on black
+      # except model names (5.1:1).
+      C_DIM=$'\e[38;5;244m'
+      C_GRN=$'\e[1;38;5;87m'    # light cyan — healthy
+      C_YEL=$'\e[1;4;38;5;231m' # white, bold, underlined — about to change
+      C_RED=$'\e[1;38;5;207m'   # hot pink (light magenta) — costing you throughput
+      C_FIG=$'\e[38;5;37m'      # turquoise — figures
+      C_MODEL=$'\e[38;5;133m'   # dark magenta — model names
+      C_HDR=$'\e[1;38;5;37m'    # turquoise, bold — rules and section headings
+      C_HOST=$'\e[1;38;5;248m'  # light grey, bold — host identity
+      C_LBL=$'\e[38;5;248m'     # light grey — field labels and units
       ;;
     *)
       # dark (default): plain ANSI 8-colour, so it works on anything, including a
