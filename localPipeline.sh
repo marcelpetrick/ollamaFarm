@@ -259,6 +259,14 @@ stage_doc_agreement() {
     grep -qF "$k" "$SCRIPT" || problems+="cfg:$k(script) "
   done
 
+  # Every theme the script offers must have a row in the README's theme table.
+  local themes t
+  themes=$(grep -oP '(?<=^THEMES=\().*(?=\))' "$SCRIPT")
+  [ -n "$themes" ] || problems+="themes-array-not-found "
+  for t in $themes; do
+    [[ "$readme_text" == *"| \`$t\`"* ]] || problems+="theme-undocumented:$t "
+  done
+
   if [ -n "$problems" ]; then
     mark_result "6 Doc/code agreement" FAIL "${problems% }"
     return 1
@@ -389,7 +397,22 @@ stage_render_offline() {
     mark_result "9 Render smoke test" FAIL "host line missing from frame"
     return 1
   fi
-  mark_result "9 Render smoke test" PASS "frame rendered; unreachable host handled"
+  # Every theme must paint a frame with colour forced on. A typo in an escape sequence
+  # or a theme name missing from apply_theme's case would otherwise ship unnoticed:
+  # the default theme is the only one the checks above exercise.
+  local t themes bad_themes=""
+  themes=$(grep -oP '(?<=^THEMES=\().*(?=\))' "$SCRIPT")
+  for t in $themes; do
+    out=$(run_smoke 3 --theme "$t" --color -n 1 -H 127.0.0.9)
+    printf '%s\n' "$out" > "$REPORT_DIR/render-$t.txt"
+    rm -rf "$SMOKE_CFG"
+    [[ "$out" == *"Ollama farm"* && "$out" == *$'\e['* ]] || bad_themes+="$t "
+  done
+  if [ -n "$bad_themes" ]; then
+    mark_result "9 Render smoke test" FAIL "theme(s) did not render: ${bad_themes% }"
+    return 1
+  fi
+  mark_result "9 Render smoke test" PASS "frame rendered in every theme; unreachable host handled"
   return 0
 }
 
