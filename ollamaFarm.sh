@@ -83,7 +83,7 @@ fi
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.51"
+VERSION="0.0.52"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
@@ -311,7 +311,10 @@ apply_theme() {
       C_GRN=$'\e[38;5;28m'      # forest green
       C_YEL=$'\e[38;5;130m'     # dark amber (yellow is unreadable on white)
       C_RED=$'\e[38;5;124m'     # brick red
-      C_FIG=$'\e[38;5;166m'     # burnt orange — figures
+      # Figures are blue, not the burnt orange (166) they once were: that sat 9.4 CIEDE2000
+      # from the amber warning (130) -- a latency figure read as a warning -- and had only
+      # 3.8:1 contrast on white. Blue (25) is 21+ from every state colour, at 6.5:1.
+      C_FIG=$'\e[38;5;25m'      # blue — figures
       C_MODEL=$'\e[38;5;90m'    # plum — model names
       C_HDR=$'\e[1;38;5;23m'    # deep teal — rules and section headings
       C_HOST=$'\e[1;38;5;236m'  # near-black, bold — host identity

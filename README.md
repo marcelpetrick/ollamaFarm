@@ -199,7 +199,7 @@ Three, cycled with `t` or chosen with `--theme`:
 |---|---|---|
 | `dark` *(default)* | any terminal, including a plain tty | ANSI 8-colour, so it inherits **your** palette |
 | `vivid` | dark background, 256-colour | loud: cyan structure, orange figures, orchid model names |
-| `light` | light background | dark ends of each hue — forest green, brick red, burnt orange |
+| `light` | light background | dark ends of each hue — forest green, brick red, blue figures |
 
 `vivid` paints seven distinct hues in a single frame where `dark` uses five, two of
 which are only bold and dim. The difference is that it colours **secondary** text —
@@ -510,7 +510,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.51 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.52 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.
