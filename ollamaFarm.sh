@@ -74,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.41"
+VERSION="0.0.42"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -764,11 +764,26 @@ probe_load() {  # probe_load <host> <model> <ctx>
     esac
   fi
 
+  # Measure THIS model by name, never ".models[0]": if anything else became resident
+  # during the load, the first entry may be somebody else's model -- which once made a
+  # colleague's 4 GB model read as the scan's own result.
   r=$(curl -s --max-time 10 "$base/api/ps" 2>/dev/null \
-      | jq -r '.models[0] | "\(.size_vram/1e9) \(if .size_vram < .size - 5e7 then "split" else "ok" end)"' 2>/dev/null)
+      | jq -r --arg m "$model" 'first(.models[]? | select(.name == $m))
+          | "\(.size_vram/1e9) \(if .size_vram < .size - 5e7 then "split" else "ok" end)"' 2>/dev/null)
   curl -s --max-time 60 -X POST "$base/api/generate" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$model" '{model:$m,keep_alive:0}')" >/dev/null 2>&1
   [ -n "$r" ] && printf '%s' "$r" || printf '0 err'
+}
+
+# Names of anything resident on <host> other than <model>, comma-separated; empty means
+# the host is still ours to load on. A host that does not answer, or answers garbage,
+# reports itself as busy: the safe reading of "unknown" is "somebody may be using it".
+foreign_resident() {  # foreign_resident <host> <model>
+  local ps
+  ps=$(curl -sf --max-time 5 "http://$1:$PORT/api/ps" 2>/dev/null) \
+    || { printf '(host not answering)'; return; }
+  printf '%s' "$ps" | jq -r --arg m "$2" '[.models[]?.name | select(. != $m)] | join(", ")' \
+    2>/dev/null || printf '(unreadable /api/ps)'
 }
 
 probe_host() {
@@ -799,7 +814,12 @@ probe_host() {
   # those to the same small budget as a real attempt made the scan give up before it
   # reached a model it could load. Rejections are therefore counted separately and
   # allowed to run further; the search still stops at the first model that does load.
-  local best=0 capped=0 rejected=0 model
+  # The idle check above is only a snapshot, and a scan runs for minutes. A colleague
+  # who starts work on this host mid-scan must not have their model displaced by the
+  # next num_gpu:999 load, so every load is preceded by a fresh check and the scan stops
+  # the moment anyone else is resident. This narrows the race to the gap between one
+  # /api/ps and one /api/generate; the API offers no way to close it entirely.
+  local best=0 capped=0 rejected=0 busy="" model
   for model in $models; do
     # 12, not a smaller number: the .37 box needed 7 rejections before reaching a model
     # it could hold, and a rejection costs only ~8 s because the allocator refuses long
@@ -814,6 +834,7 @@ probe_host() {
 
     plog "probe $host: $model (max ctx $maxctx)"
     local lo=2048 hi="$maxctx" res vram verdict
+    busy=$(foreign_resident "$host" "$model"); [ -n "$busy" ] && break
     res=$(probe_load "$host" "$model" "$lo"); vram="${res%% *}"; verdict="${res##* }"
     case "$verdict" in
       oom)   plog "  $model will not fit even at ctx $lo — trying a smaller model"
@@ -833,6 +854,7 @@ probe_host() {
     while [ "$i" -lt 7 ] && [ $(( hi - lo )) -gt 4096 ]; do
       i=$((i + 1))
       local mid=$(( (lo + hi) / 2 ))
+      busy=$(foreign_resident "$host" "$model"); [ -n "$busy" ] && break
       res=$(probe_load "$host" "$model" "$mid"); vram="${res%% *}"; verdict="${res##* }"
       case "$verdict" in
         ok)    lo="$mid"; fgt "$vram" "$best" && best="$vram"
@@ -847,6 +869,10 @@ probe_host() {
     done
     break
   done
+
+  # Whatever was demonstrated before the host turned busy is still a real fit and is
+  # kept below; the scan simply goes no further.
+  [ -n "$busy" ] && plog "SKIP $host — became busy mid-scan, holding: $busy; scan stopped"
 
   if fgt "$best" 0; then
     # $capped records that the card refused something larger, which is worth saying in

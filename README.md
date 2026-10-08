@@ -301,7 +301,8 @@ which is why every scanned figure stays a lower bound and keeps its `+` — and 
 ### Safety
 
 **Idle hosts only** — anything resident and the host is skipped, loudly, naming what it
-would have had to evict; an explicit `keep_alive: 0` request unloads the model after
+would have had to evict, and the check is repeated before **every** test load, so a host
+that someone starts using mid-scan stops the scan rather than losing their model; an explicit `keep_alive: 0` request unloads the model after
 every test load; and it runs **detached**, so the display keeps refreshing while
 progress appears in the event log. A second scan while one runs is refused.
 
@@ -498,7 +499,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.41 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.42 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.
