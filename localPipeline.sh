@@ -267,6 +267,20 @@ stage_doc_agreement() {
   return 0
 }
 
+# Bad input must exit 2 before anything runs. If a regression lets it through, the
+# full TUI starts instead -- which once hung this stage indefinitely while polling the
+# real default hosts at 0.25 s and saving that rate into the developer's config. So
+# every case is bounded, pointed at an address nothing listens on, and isolated.
+bad_input_rc() {  # bad_input_rc <args...>  -> the script's exit status
+  local cfg rc
+  cfg=$(mktemp -d) || return 1
+  XDG_CONFIG_HOME="$cfg" timeout 5 "$SCRIPT" --no-auto-scan -H 127.0.0.9 "$@" \
+    </dev/null >/dev/null 2>&1
+  rc=$?
+  rm -rf "$cfg"
+  return "$rc"
+}
+
 stage_help_and_args() {
   local problems="" out rc
 
@@ -278,10 +292,10 @@ stage_help_and_args() {
   printf '%s' "$out" | grep -q "WARRANTY" && problems+="help-leaks-licence "
   printf '%s' "$out" | grep -q "set -uo pipefail" && problems+="help-leaks-code "
 
-  "$SCRIPT" --definitely-not-a-flag >/dev/null 2>&1; [ "$?" -eq 2 ] || problems+="bad-flag-not-2 "
-  "$SCRIPT" -p abc >/dev/null 2>&1;                  [ "$?" -eq 2 ] || problems+="bad-port-not-2 "
-  "$SCRIPT" -n >/dev/null 2>&1;                      [ "$?" -eq 2 ] || problems+="missing-value-not-2 "
-  "$SCRIPT" -n abc >/dev/null 2>&1;                  [ "$?" -eq 2 ] || problems+="bad-interval-not-2 "
+  bad_input_rc --definitely-not-a-flag; [ "$?" -eq 2 ] || problems+="bad-flag-not-2 "
+  bad_input_rc -p abc;                  [ "$?" -eq 2 ] || problems+="bad-port-not-2 "
+  bad_input_rc -n abc;                  [ "$?" -eq 2 ] || problems+="bad-interval-not-2 "
+  bad_input_rc -n;                      [ "$?" -eq 2 ] || problems+="missing-value-not-2 "
 
   if [ -n "$problems" ]; then
     mark_result "7 Help & arguments" FAIL "${problems% }"

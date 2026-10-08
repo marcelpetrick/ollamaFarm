@@ -504,7 +504,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.47 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.48 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.
