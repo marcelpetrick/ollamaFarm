@@ -1,4 +1,8 @@
-# Plan: discovering usable VRAM
+# Discovering usable VRAM
+
+*This began as a plan and is kept as a record, wrong turns included: the sections are in
+the order the work happened, and later sections correct earlier ones. For what the tool
+does now, read the README.*
 
 When this was written, `VRAM_TOTAL` (now `VRAM_FLOOR`) was a hardcoded table, and a
 host that was not in it showed `?` with no bar. This is the investigation into whether that can be automated, what is
@@ -254,7 +258,10 @@ the reason `VRAM_FLOOR` carries the larger, demonstrated figure.
 
 ### What will not be built
 
-- No automatic probing on startup or on the `d` key.
+- ~~No automatic probing on startup~~ — reversed in 0.0.23: an idle host with no known
+  ceiling is now scanned automatically at startup, because passive learning cannot start
+  from an idle host. Busy hosts are still never touched, and `--no-auto-scan` opts out.
+  Still nothing on the `d` key.
 - No inference of capacity from a split event alone.
 - No hardware-total reporting, because the API cannot supply it and guessing it would
   put fictional headroom on the bar.

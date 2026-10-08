@@ -65,7 +65,7 @@ flowchart TB
     cfg[("config<br/><i>interval, toggles,<br/>history length, theme</i>")]
     hosts[("hosts<br/><i>cached discovery</i>")]
     vram[("vram<br/><i>host, GB, source, epoch</i>")]
-    plog[("probe.log<br/><i>worker progress, append-only</i>")]
+    plog[("probe.log<br/><i>worker progress, emptied<br/>when a scan starts</i>")]
     plock[("probe.lock<br/><i>pid of the running scan</i>")]
   end
 
@@ -102,7 +102,11 @@ Two details in that picture are load-bearing:
   made a previous session's scan reappear as if live, and re-adopted its `RESULT` lines,
   resurrecting a ceiling the user had just deleted. The offset is initialised to the
   log's current end at startup, so only output produced after this process started is
-  ever read.
+  ever read. Every scan empties the log as it starts, so a file *shorter* than the offset
+  means another process began a new scan, and reading restarts from zero.
+- **`vram` is merged, never overwritten.** Every role writes it, so each save re-reads the
+  file and keeps the larger figure per host; a plain rewrite from memory once erased
+  another process's result.
 - **`probe.lock` holds a pid, not a flag.** A crashed scan leaves the file behind, so
   liveness is tested with `kill -0` rather than existence, and a stale lock self-heals.
   All three roles take it, so a foreground `--probe-vram` cannot be run alongside a TUI
@@ -126,7 +130,7 @@ flowchart TB
 
   keys["<b>Key handler</b><br/>read -t doubles as the sleep,<br/>so keys stay responsive"]
   disc["<b>Discovery</b><br/>/api/version across the /24,<br/>64 in parallel"]
-  probe["<b>Scan launcher</b><br/>idle-host and lock checks,<br/>then detaches a worker"]
+  probe["<b>Scan launcher</b><br/>lock check, then detaches<br/>a worker, which checks idleness"]
 
   geom --> render --> diff --> ceil --> warn --> events --> paint
   paint --> keys
@@ -216,10 +220,12 @@ sequenceDiagram
     else idle
         W->>H: GET /api/tags — largest model first
         loop until one fits, max 12 rejections
+            W->>H: GET /api/ps — still idle? else stop
             W->>H: POST /api/generate, num_gpu 999, ctx 2048
             H-->>W: cudaMalloc OOM → too big, step down
         end
         loop binary search, max 7 loads
+            W->>H: GET /api/ps — still idle? else stop
             W->>H: POST /api/generate, num_gpu 999, ctx N
             alt fits
                 H-->>W: size_vram — raise the floor
@@ -235,8 +241,10 @@ sequenceDiagram
     T-->>U: progress and result in the event log
 ```
 
-Steps 1-4 are the safety envelope; the two loops are the measurement. `keep_alive: 0`
-after **every** test load is what keeps the host as idle as it was found.
+Steps 1-4 are the safety envelope; the two loops are the measurement. The idle check is
+repeated before **every** load, because a scan runs for minutes and someone may start
+work on the host meanwhile; `keep_alive: 0` after every successful load is what keeps the
+host as idle as it was found.
 
 ### Why `num_gpu: 999`
 

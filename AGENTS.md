@@ -80,8 +80,9 @@ These have all been hit and fixed once. Do not reintroduce them.
   get an isolated run.
 - **An out-of-memory refusal bounds the model, not the machine.** Covered in full under
   "The VRAM probe" below. It is the single easiest wrong conclusion to reach here.
-- **Validate mermaid with `mmdc`, do not eyeball it.** `docs/architecture.md` is checked
-  by rendering every block. A `;` inside a `Note` silently terminates the statement and
+- **Validate mermaid with `mmdc`, do not eyeball it.** Render every block in
+  `docs/architecture.md` by hand after changing it — the pipeline does not do this, and
+  CI has no `mmdc`. A `;` inside a `Note` silently terminates the statement and
   fails the parse — that one shipped past a careful read-through and was caught only by
   the renderer.
 

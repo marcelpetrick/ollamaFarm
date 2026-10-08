@@ -313,8 +313,9 @@ that someone starts using mid-scan stops the scan rather than losing their model
 every test load; and it runs **detached**, so the display keeps refreshing while
 progress appears in the event log. A second scan while one runs is refused.
 
-Durations: **~15–60 s** for a small box, **several minutes** for a large one — reach
-needs a large model, and a 33 GB model alone takes ~70 s per load.
+Durations, measured: **103 s** on the 12 GB box, most of it rejecting seven models too
+large to place (the run below), and **~3 min** on the dual-GPU box — reach needs a large
+model, and a 33 GB model alone takes ~70 s per load.
 
 <details>
 <summary><code>--probe-vram</code> in detail: real output, exit codes, scripting</summary>
@@ -419,9 +420,9 @@ any kind — only a diff across time reveals it.
 <details>
 <summary>Where those numbers come from</summary>
 
-Measured, not estimated, across two servers — a dual-GPU box with 40.4 GB of usable
-VRAM (Ollama 0.32.5) and a 12.3 GB box (0.30.6) — over 13 model configurations of the
-qwen3.5/3.6 family.
+Measured, not estimated, across two servers — a dual-GPU box with at least 40.4 GB
+demonstrated fully resident (Ollama 0.32.5 at the time) and a 12 GB box (0.30.6) — over
+13 model configurations of the qwen3.5/3.6 family.
 
 | claim | how it was established |
 |---|---|
@@ -453,8 +454,10 @@ The full write-up lives with the original benchmarking work in
 **Load.** The monitoring loop makes two read-only `GET`s per host per frame
 (`/api/version`, `/api/ps`); `/api/show` is fetched once per (host, model) and cached.
 The loop polls nothing while paused, although a detached VRAM probe already in progress
-continues until it finishes. At 1 Hz two hosts are about 170k requests a day, which is
-worth knowing before leaving it running overnight; `+` dials the interval back to 30 s.
+continues until it finishes. At 1 Hz that is up to 2 × 86,400 ≈ 173k requests per host
+per day — about 346k for two hosts; slightly fewer in practice, since a frame takes a
+little longer than its interval. Worth knowing before leaving it running overnight; `+`
+dials the interval back to 30 s.
 
 **GPU temperature, utilisation, fan and power are not shown.** The Ollama API does not
 expose them — they live in `nvidia-smi` on the server, which would mean SSH access to
@@ -507,7 +510,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.50 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.51 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

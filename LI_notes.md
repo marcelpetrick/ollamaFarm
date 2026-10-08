@@ -75,7 +75,7 @@ too (see "Do not overclaim").
    and can only move whole layers. So the split point measures **Ollama's caution, not
    the GPU**. Sending `num_gpu: 999` pins every layer to the card and takes the estimate
    out of the loop; the CUDA allocator then answers directly. The dual-GPU box that had
-   reported **36.1 GB** for months demonstrably holds **40.4 GB**: 4.3 GB of real
+   reported **36.1 GB** since the first build demonstrably holds **40.4 GB**: 4.3 GB of real
    headroom that the bar had been painting as full. Good beat for the article — the tool
    was wrong, and wrong in the direction that looks like caution.
 
@@ -84,9 +84,11 @@ too (see "Do not overclaim").
    investigation had concluded was unobtainable, so the scanned figure was promoted and
    the `+` came off. Running the tool's own scan against the same box returned
    **34.69 GB** where the hand-run scan had reached **40.47 GB** — same machine, same
-   day, both idle. The variable was the *model*: `qwen3.6:27b-q8_0` divides across the
-   two cards evenly, `qwen3.6:27b-mtp-q8_0-ctx60k` does not, so one card fills while the
-   other still has room. **A refusal bounds the model, not the machine.** 5.8 GB of
+   day, both idle. The variable was the *model*: `qwen3.6:27b-q8_0` reaches 5.8 GB further
+   than `qwen3.6:27b-mtp-q8_0-ctx60k`, most plausibly because their layers divide
+   differently across the two cards, so one fills while the other still has room. (That
+   mechanism is inferred: the API does not report per-card placement.) **A refusal
+   bounds the model, not the machine.** 5.8 GB of
    spread on one box. The `+` went back on. The honest arc for a post is not "I built a
    probe" but *"I built a probe, believed it, and was wrong by 5.8 GB until I ran it
    twice"* — and the thing that saved it was re-measuring rather than reasoning.
@@ -126,9 +128,10 @@ too (see "Do not overclaim").
 
 ## Do not overclaim
 
-- The numbers are **specific to two boxes and the qwen3.5/3.6 family** — a 12.3 GB host
-  on Ollama 0.30.6 and a 40.4 GB dual-GPU host on 0.32.5, across 13 model
-  configurations. The `~70 s` reload is what *a 33 GB MoE* costs, not a universal
+- The numbers are **specific to two boxes and the qwen3.5/3.6 family** — a 12 GB host
+  on Ollama 0.30.6 and a dual-GPU host demonstrated to hold at least 40.4 GB, on 0.32.5,
+  across 13 model configurations. The `~70 s` reload is what *a 33 GB MoE* costs, not a
+  universal
   constant.
 - The 16k finding is **version dependent**: 0.32.5 truncates an overflowing prompt to
   `num_ctx/2`, 0.30.6 fills the window normally. A newer Ollama is something to

@@ -83,7 +83,7 @@ fi
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.50"
+VERSION="0.0.51"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
@@ -773,12 +773,14 @@ help_overlay() {
 # much" that passive observation and the old auto-offload scan could ever produce.
 #
 # Three rules make this safe to bind to a key on somebody else's server:
-#   1. an idle host only. If anything is resident the host is skipped, loudly. Evicting
-#      a colleague's model costs them a ~70 s reload, so the scan never does it.
+#   1. an idle host only, re-checked before every load. If anything is resident the host
+#      is skipped, loudly. Evicting a colleague's model costs them a ~70 s reload, so the
+#      scan never does it.
 #   2. keep_alive 0 on every load, so nothing is left behind.
-#   3. it runs detached, and the UI keeps refreshing. A scan takes ~40-70 s on a small
-#      box and several minutes on a large one, because reach requires a large model and
-#      a 33 GB model alone takes ~70 s to load.
+#   3. it runs detached, and the UI keeps refreshing. Measured: 103 s on the 12 GB box
+#      (seven too-large models rejected at ~8 s each before one fitted) and ~3 min on the
+#      dual-GPU box, because reach requires a large model and a 33 GB model alone takes
+#      ~70 s to load.
 plog() {
   printf '%s\n' "$*" >> "$PROBE_LOG"
   [ "$PROBE_CLI" = "1" ] && printf '%s\n' "$*"
