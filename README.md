@@ -44,8 +44,9 @@ v0.0.36.</sub>
   hosts, or on demand with `s` / `--probe-vram`.
 - **A live event log** — models loading, expiring, being displaced, hosts dropping off
   the network. State changes you would otherwise have to catch in the act.
-- **Four colour themes**, switchable while running: `dark` for any terminal, `vivid`
-  for a loud 256-colour look, `light` for a white background, `cga` for the 1981 look.
+- **Five colour themes**, switchable while running: `dark` for any terminal, `vivid`
+  for a loud 256-colour look, `light` for a white background, `cga` for the 1981 look,
+  and `colorblind` for red-green colour blindness.
 - **Proper TUI controls** — `+`/`-` refresh rate, pause, per-section toggles, a help
   overlay, all persisted between sessions.
 - **Credential-free monitoring.** The normal refresh loop only reads API state and
@@ -131,7 +132,7 @@ guessed.
 | `l` | event history length — cycles `5` → `10` → `20` → `50` entries |
 | `d` | re-run host discovery |
 | `s` | re-scan idle hosts for their VRAM ceiling |
-| `t` | cycle colour theme (`dark` → `vivid` → `light` → `cga`) |
+| `t` | cycle colour theme (`dark` → `vivid` → `light` → `cga` → `colorblind`) |
 | `h` or `?` | help overlay |
 | `q` | quit |
 
@@ -151,7 +152,7 @@ saved in an earlier session cannot leave you staring at a screen that looks brok
 ./ollamaFarm.sh -D                 # scan for hosts at startup
 ./ollamaFarm.sh --probe-vram HOST  # measure a VRAM ceiling now, then exit
 ./ollamaFarm.sh --no-auto-scan     # do not bootstrap unknown ceilings
-./ollamaFarm.sh --theme light      # dark (default) | vivid | light | cga
+./ollamaFarm.sh --theme light      # dark (default) | vivid | light | cga | colorblind
 ./ollamaFarm.sh --no-color         # plain; NO_COLOR is honoured too
 ./ollamaFarm.sh --version
 ./ollamaFarm.sh --help
@@ -193,7 +194,7 @@ declare -A VRAM_FLOOR=( [192.168.100.37]=12.3 [192.168.100.67]=40.4 )
 
 ## Themes
 
-Four, cycled with `t` or chosen with `--theme`:
+Five, cycled with `t` or chosen with `--theme`:
 
 | theme | for | palette |
 |---|---|---|
@@ -201,6 +202,7 @@ Four, cycled with `t` or chosen with `--theme`:
 | `vivid` | dark background, 256-colour | loud: cyan structure, orange figures, orchid model names |
 | `light` | light background | dark ends of each hue — forest green, brick red, blue figures |
 | `cga` | dark background, 256-colour | IBM CGA palette 1 — cyan, hot pink, white, turquoise |
+| `colorblind` | dark background, 256-colour | Okabe–Ito — sky blue, yellow, vermillion; everything else grey |
 
 `vivid` paints seven distinct hues in a single frame where `dark` uses five, two of
 which are only bold and dim. The difference is that it colours **secondary** text —
@@ -208,9 +210,11 @@ field labels, units, the version, latency — instead of dimming it.
 
 Colour is assigned by role, never picked at the call site, so a theme repaints meanings
 but cannot repurpose them: **green is healthy, yellow is about to change, red is costing
-you throughput right now**. `cga` is the one theme without those hues — its palette has
-only cyan, magenta and white — so it keeps the same three meanings in its own colours:
-**cyan is healthy, underlined white is about to change, pink is costing you throughput**.
+you throughput right now**. Two themes deliberately use other colours for the same three
+meanings. `cga` has no such hues — its palette is cyan, magenta and white — so **cyan is
+healthy, underlined white is about to change, pink is costing you throughput**.
+`colorblind` avoids the green/red pair that red-green colour blindness merges: **blue is
+healthy, yellow is about to change, vermillion is costing you throughput**.
 
 <details>
 <summary>The slots a theme paints, and two notes on the choices</summary>
@@ -230,6 +234,11 @@ only cyan, magenta and white — so it keeps the same three meanings in its own 
 - `light` avoids yellow entirely — it is unreadable on white — and uses dark amber. It
   also sets an explicit grey for secondary text, because the ANSI *dim attribute*
   renders as barely-there on a light background in several terminals.
+- `colorblind` was chosen by measurement, not by eye. Simulating full-severity
+  deuteranopia and protanopia (Machado et al. 2009) and comparing CIEDE2000, its closest
+  pair of state colours is 21.4 and 32.2 apart; `vivid` scores 7.4 and 5.0, `light` 5.3
+  and 6.9 — below 10, two colours are easily confused. The ⚠, `EVICTED` and `UNREACHABLE`
+  markers carry the same meaning in text, in every theme.
 - `cga` underlines its warnings as well as colouring them white, because white is also
   the colour of ordinary text there; a warning must not be distinguishable by hue alone.
 - `dark` deliberately stays 8-colour rather than looking nicer. It is the fallback that
@@ -515,7 +524,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.54 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.55 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

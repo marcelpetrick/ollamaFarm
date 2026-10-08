@@ -49,7 +49,7 @@
 #   ./ollamaFarm.sh --probe-vram       # scan every host now, print, exit
 #   ./ollamaFarm.sh --probe-vram HOST  # scan one host now, print, exit
 #   ./ollamaFarm.sh --no-auto-scan     # do not bootstrap unknown VRAM ceilings
-#   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light | cga
+#   ./ollamaFarm.sh --theme light      # dark (default) | vivid | light | cga | colorblind
 #   ./ollamaFarm.sh --no-color         # plain output (also honours NO_COLOR)
 #   ./ollamaFarm.sh --version          # print the version and exit
 #
@@ -83,7 +83,7 @@ fi
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.54"
+VERSION="0.0.55"
 
 # Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
 # not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
@@ -101,7 +101,7 @@ AUTO_SCAN=1                # bootstrap an unknown ceiling automatically, idle ho
 WANT_COLOR=auto
 # Colour themes, cycled by the "t" key in this order. "dark" is plain ANSI so it
 # works on any terminal; the others assume 256-colour support.
-THEMES=(dark vivid light cga)
+THEMES=(dark vivid light cga colorblind)
 THEME=dark
 HOSTS_FROM_ARG=0
 
@@ -268,8 +268,8 @@ fi
 # A theme repaints those slots; it must never repurpose them. Whatever the palette,
 # the healthy thing is fine and the bad thing is costing you throughput -- otherwise
 # the display stops being readable at a glance, which is the only reason it exists.
-# Most themes paint them green / yellow / red; cga cannot, and keeps the meanings in
-# its own three colours instead.
+# Most themes paint them green / yellow / red; cga cannot, and colorblind must not, so
+# both keep the meanings in other colours instead.
 #
 # Slots: C_GRN good · C_YEL warning · C_RED bad · C_FIG figures · C_MODEL model names
 #        C_DIM secondary text · C_B emphasis · C_REV inverted badge
@@ -341,6 +341,25 @@ apply_theme() {
       C_HDR=$'\e[1;38;5;37m'    # turquoise, bold — rules and section headings
       C_HOST=$'\e[1;38;5;248m'  # light grey, bold — host identity
       C_LBL=$'\e[38;5;248m'     # light grey — field labels and units
+      ;;
+    colorblind)
+      # For red-green colour blindness, which affects roughly one man in twelve and makes
+      # the green / red pair -- the most important distinction on this screen -- the
+      # hardest one to see. State colours follow Okabe & Ito's colour-blind-safe palette:
+      #   healthy = sky blue, about to change = yellow, bad = vermillion.
+      # Measured with Machado et al.'s (2009) full-severity simulation, CIEDE2000, the
+      # closest pair of state colours is 21.4 apart under deuteranopia and 32.2 under
+      # protanopia; vivid manages 7.4 and 5.0, light 5.3 and 6.9. Everything that is not
+      # a state is drawn in greys and one light purple, so no hue competes with them.
+      C_DIM=$'\e[38;5;244m'
+      C_GRN=$'\e[1;38;5;39m'    # sky blue — healthy
+      C_YEL=$'\e[1;38;5;227m'   # yellow — about to change
+      C_RED=$'\e[1;38;5;202m'   # vermillion — costing you throughput
+      C_FIG=$'\e[38;5;255m'     # white — figures
+      C_MODEL=$'\e[38;5;183m'   # light purple — model names
+      C_HDR=$'\e[1;38;5;252m'   # light grey, bold — rules and section headings
+      C_HOST=$'\e[1;38;5;255m'  # white, bold — host identity
+      C_LBL=$'\e[38;5;250m'     # grey — field labels and units
       ;;
     *)
       # dark (default): plain ANSI 8-colour, so it works on anything, including a
