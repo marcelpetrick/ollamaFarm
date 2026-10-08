@@ -480,7 +480,7 @@ smoke test against a real server is optional and skipped when no host answers. E
 push to `master`, pull request against `master`, and manual dispatch runs the mandatory
 stages in GitHub Actions. The Quality badge at the top links to the latest `master`
 result. The workflow shallow-fetches the exact triggering ref, verifies its commit SHA,
-and uses the pinned Ubuntu 24.04 runner's installed tools directly, so it depends on no
+and uses the pinned Ubuntu 26.04 runner's installed tools directly, so it depends on no
 downloadable actions.
 
 Maintainers can run the Release workflow manually from `master`. It reruns the quality
@@ -498,7 +498,7 @@ bitten by: [AGENTS.md](AGENTS.md).
 
 Semantic versioning, patch bumped on every commit. `VERSION` near the top of
 `ollamaFarm.sh` is the single source of truth; it is rendered in the header
-(`┌─ Ollama farm 0.0.40 ──…──┐`) so a screenshot or a pasted frame identifies its build,
+(`┌─ Ollama farm 0.0.41 ──…──┐`) so a screenshot or a pasted frame identifies its build,
 and `--version` prints it.
 
 Release tags are created only by the manual Release workflow, after its quality gate.

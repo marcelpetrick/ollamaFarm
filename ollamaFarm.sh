@@ -74,7 +74,7 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.40"
+VERSION="0.0.41"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434

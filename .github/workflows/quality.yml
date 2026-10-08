@@ -25,10 +25,11 @@ jobs:
     # dependency -- there are no actions to pin and no package manifest -- and it is
     # what supplies bash, shellcheck and jq. A floating label re-points without a
     # commit, so a shellcheck that ships a new default rule set would fail a build
-    # nothing in this repository had touched. ubuntu-latest resolves to 24.04 today,
-    # so this pin changes nothing now and only stops the silent roll later.
-    # ubuntu-26.04 exists but is still preview; revisit when it reaches GA.
-    runs-on: ubuntu-24.04
+    # nothing in this repository had touched -- and ubuntu-latest moves from 24.04 to
+    # 26.04 in November 2026. 26.04 is GA and ships shellcheck 0.11.0, bash 5.3 and
+    # jq 1.8, the same generation the local gate is run with, so CI and a developer's
+    # machine apply the same rule set. Re-pin deliberately, never by drift.
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
 
     steps:
