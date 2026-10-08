@@ -74,7 +74,12 @@ set -uo pipefail
 
 # Semantic version of this script. Patch is bumped on every commit;
 # it is rendered in the header so a screenshot identifies its build.
-VERSION="0.0.48"
+VERSION="0.0.49"
+
+# Absolute path to this script, for re-launching it as the detached scan worker. "$0" is
+# not enough: started as "bash ollamaFarm.sh" it is a bare name, which nohup looks up on
+# PATH rather than in the current directory, and the worker silently never ran.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # ---------------------------------------------------------------- defaults ----
 PORT=11434
@@ -970,7 +975,8 @@ start_probe() {  # start_probe [host ...]   (defaults to every known host)
   fi
   [ -n "${targets// /}" ] || return 0
   mkdir -p "$CFG_DIR" 2>/dev/null
-  setsid nohup "$0" --probe-worker -H "$(echo "$targets" | tr ' ' ',')" -p "$PORT" \
+  # Through bash explicitly, so a copy without the executable bit still works.
+  setsid nohup bash "$SELF" --probe-worker -H "$(echo "$targets" | tr ' ' ',')" -p "$PORT" \
     </dev/null >/dev/null 2>&1 &
   echo $! > "$PROBE_LOCK"
   PROBE_OFFSET=0
